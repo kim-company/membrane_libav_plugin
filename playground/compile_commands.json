@@ -1,0 +1,15 @@
+[
+  {
+    "arguments": [
+      "/opt/homebrew/opt/llvm/bin/clang",
+      "-c",
+      "-I/opt/homebrew/Cellar/ffmpeg/6.0_1/include",
+      "-o",
+      "main",
+      "main.c"
+    ],
+    "directory": "/Users/dmorn/projects/membrane_avcodec_plugin/tmp",
+    "file": "/Users/dmorn/projects/membrane_avcodec_plugin/tmp/main.c",
+    "output": "/Users/dmorn/projects/membrane_avcodec_plugin/tmp/main"
+  }
+]
