@@ -3,13 +3,45 @@
     "arguments": [
       "/opt/homebrew/opt/llvm/bin/clang",
       "-c",
+      "-g",
       "-I/opt/homebrew/Cellar/ffmpeg/6.0_1/include",
+      "-I/Users/dmorn/.local/share/rtx/installs/erlang/26.0.2/erts-14.0.2/include",
       "-o",
-      "main",
-      "main.c"
+      "nif",
+      "nif.c"
     ],
-    "directory": "/Users/dmorn/projects/membrane_avcodec_plugin/tmp",
-    "file": "/Users/dmorn/projects/membrane_avcodec_plugin/tmp/main.c",
-    "output": "/Users/dmorn/projects/membrane_avcodec_plugin/tmp/main"
+    "directory": "/Users/dmorn/projects/membrane_libav_plugin/playground",
+    "file": "/Users/dmorn/projects/membrane_libav_plugin/playground/nif.c",
+    "output": "/Users/dmorn/projects/membrane_libav_plugin/playground/nif"
+  },
+  {
+    "arguments": [
+      "/opt/homebrew/opt/llvm/bin/clang",
+      "-c",
+      "-g",
+      "-I/opt/homebrew/Cellar/ffmpeg/6.0_1/include",
+      "-I/Users/dmorn/.local/share/rtx/installs/erlang/26.0.2/erts-14.0.2/include",
+      "-o",
+      "detect_format",
+      "detect_format.c"
+    ],
+    "directory": "/Users/dmorn/projects/membrane_libav_plugin/playground",
+    "file": "/Users/dmorn/projects/membrane_libav_plugin/playground/detect_format.c",
+    "output": "/Users/dmorn/projects/membrane_libav_plugin/playground/detect_format"
+  },
+  {
+    "arguments": [
+      "/opt/homebrew/opt/llvm/bin/clang",
+      "-c",
+      "-g",
+      "-I/opt/homebrew/Cellar/ffmpeg/6.0_1/include",
+      "-I/Users/dmorn/.local/share/rtx/installs/erlang/26.0.2/erts-14.0.2/include",
+      "-o",
+      "detect_streams",
+      "detect_streams.c"
+    ],
+    "directory": "/Users/dmorn/projects/membrane_libav_plugin/playground",
+    "file": "/Users/dmorn/projects/membrane_libav_plugin/playground/detect_streams.c",
+    "output": "/Users/dmorn/projects/membrane_libav_plugin/playground/detect_streams"
   }
 ]
