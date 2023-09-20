@@ -16,4 +16,8 @@ defmodule Membrane.LibAV.Demuxer.Nif do
   def detect_streams(_ctx) do
     raise "NIF detect_streams/1 not implemented"
   end
+
+  def is_ready(_ctx) do
+    raise "NIF is_ready/1 not implemented"
+  end
 end

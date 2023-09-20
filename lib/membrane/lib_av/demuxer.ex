@@ -43,21 +43,22 @@ defmodule Membrane.LibAV.Demuxer do
   def handle_buffer(:input, buffer, _ctx, state = %{format_detected?: false}) do
     IO.inspect([pts: buffer.pts, size: byte_size(buffer.payload)], label: "BUFFER RECEIVED")
     :ok = Nif.add_data(state.ctx, buffer.payload)
+    ready = Nif.is_ready(state.ctx) |> IO.inspect(label: "IS READY")
 
-    case Nif.detect_streams(state.ctx) do
-      {:ok, streams} ->
-        actions =
-          Enum.map(streams, fn {codec, stream_index} ->
-            {:notify_parent,
-             {:new_stream, %{codec_name: to_string(codec), stream_index: stream_index}}}
-          end)
+    if ready > 0 do
+      {:ok, streams} = Nif.detect_streams(state.ctx)
 
-        # We're not sending any demand till a pad is connected and
-        # asks for it.
-        {actions, %{state | format_detected?: true}}
+      actions =
+        Enum.map(streams, fn {codec, stream_index} ->
+          {:notify_parent,
+           {:new_stream, %{codec_name: to_string(codec), stream_index: stream_index}}}
+        end)
 
-      {:error, :again} ->
-        {[demand: {:input, 1}], state}
+      # We're not sending any demand till a pad is connected and
+      # asks for it.
+      {actions, %{state | format_detected?: true}}
+    else
+      {[demand: {:input, 1}], state}
     end
   end
 
