@@ -32,20 +32,20 @@ int read_packet(void *opaque, uint8_t *buf, int buf_size) {
   queue = (ErlNifIOQueue *)opaque;
   size = enif_ioq_size(queue);
 
+  printf("queue size: %d, requested: %d\n", size, buf_size);
+
   // Take the minimum value, we cannot extract more bytes from the queue than
   // the available ones.
   size = buf_size > size ? size : buf_size;
-  if (size > 0) {
-    vec = enif_ioq_peek(queue, &size);
-
-    memcpy(buf, vec->iov_base, vec->iov_len);
-    // Remove the data from the queue once read.
-    enif_ioq_deq(queue, vec->iov_len, NULL);
-
-    return size;
-  } else {
+  if (!size)
     return AVERROR_EOF;
-  }
+
+  vec = enif_ioq_peek(queue, &size);
+  memcpy(buf, vec->iov_base, vec->iov_len);
+  // Remove the data from the queue once read.
+  enif_ioq_deq(queue, vec->iov_len, NULL);
+
+  return size;
 }
 
 void free_ctx_res(ErlNifEnv *env, void *res) {
@@ -72,17 +72,19 @@ int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
 
 ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
                            const ERL_NIF_TERM argv[]) {
+  ErlNifIOQueue *queue = enif_ioq_create(ERL_NIF_IOQ_NORMAL);
   // Freed by io_ctx.
   void *io_buffer = av_malloc(IO_BUF_SIZE);
-  ErlNifIOQueue *queue = enif_ioq_create(ERL_NIF_IOQ_NORMAL);
-
   // Context that reads from queue and uses io_buffer as scratch space.
   AVIOContext *io_ctx = avio_alloc_context(io_buffer, IO_BUF_SIZE, 0, queue,
-                                           read_packet, NULL, NULL);
+                                           &read_packet, NULL, NULL);
+  AVFormatContext *fmt_ctx = avformat_alloc_context();
+  fmt_ctx->pb = io_ctx;
 
   Ctx *ctx = (Ctx *)malloc(sizeof(Ctx));
   ctx->queue = queue;
   ctx->io_ctx = io_ctx;
+  ctx->fmt_ctx = fmt_ctx;
 
   // Make the resource take ownership on the context.
   Ctx **ctx_res = enif_alloc_resource(CTX_RES_TYPE, sizeof(Ctx *));
@@ -106,7 +108,10 @@ ERL_NIF_TERM add_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
 
   // data is owned by the ioq from this point on.
   // TODO should we enqueue the binary after the size of the queue?
+  int before = enif_ioq_size(ctx->queue);
   enif_ioq_enq_binary(ctx->queue, &binary, 0);
+  int after = enif_ioq_size(ctx->queue);
+  printf("size before: %d, after: %d\n", before, after);
 
   return enif_make_atom(env, "ok");
 }
@@ -120,18 +125,17 @@ ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
 
   get_ctx(env, argv[0], &ctx);
 
-  AVFormatContext *fmt_ctx = avformat_alloc_context();
-  fmt_ctx->pb = ctx->io_ctx;
-
   // TODO open input should not be called more than once, but we cannot call it
   // until the some data can be returned from read_packets (apparently).
   errnum = avformat_open_input(&ctx->fmt_ctx, "", NULL, NULL);
-  av_strerror(errnum, err, sizeof(err)); // FOR DEBUGGING
+  int errsize = av_strerror(errnum, err, sizeof(err)); // FOR DEBUGGING
   if (errnum != 0) {
+    printf("open error: %s\n", err);
     goto open_input_err;
   }
 
-  ctx->fmt_ctx = fmt_ctx;
+  // ctx->fmt_ctx = fmt_ctx;
+  // ctx->io_ctx = io_ctx;
 
   avformat_find_stream_info(ctx->fmt_ctx, NULL);
 
@@ -158,6 +162,7 @@ ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
 
 open_input_err:
   // fmt_ctx is reset to NULL and deallocated.
+  // avio_context_free(&io_ctx);
   return enif_make_tuple2(env, enif_make_atom(env, "error"),
                           enif_make_atom(env, "again"));
 }

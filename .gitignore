@@ -26,6 +26,9 @@ membrane_avcodec_plugin-*.tar
 /tmp/
 
 c_src/.cache
+playground/
 *.so
 *.so.dSYM
+br.txt
+lldb.cmd
 compile_commands.json

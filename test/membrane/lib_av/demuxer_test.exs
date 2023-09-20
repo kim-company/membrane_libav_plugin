@@ -16,7 +16,13 @@ defmodule Membrane.LibAV.DemuxerTest do
 
       pid = Membrane.Testing.Pipeline.start_link_supervised!(spec: spec)
 
-      assert_pipeline_notified(pid, :demuxer, {:new_track, _}, 500)
+      assert_pipeline_notified(
+        pid,
+        :demuxer,
+        {:new_stream, %{codec_name: "aac", stream_index: 0}},
+        1_000
+      )
+
       :ok = Membrane.Testing.Pipeline.terminate(pid)
     end
   end
