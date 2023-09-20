@@ -27,3 +27,4 @@ membrane_avcodec_plugin-*.tar
 
 c_src/.cache
 *.so
+*.so.dSYM
