@@ -24,3 +24,6 @@ membrane_avcodec_plugin-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+c_src/.cache
+*.so

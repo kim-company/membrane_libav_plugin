@@ -7,6 +7,8 @@ defmodule Membrane.LibAV.MixProject do
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
+      make_cwd: "c_src",
+      compilers: [:elixir_make] ++ Mix.compilers(),
       deps: deps()
     ]
   end
@@ -22,7 +24,8 @@ defmodule Membrane.LibAV.MixProject do
   defp deps do
     [
       {:membrane_core, "~> 0.12.5"},
-      {:membrane_file_plugin, "~> 0.15.0", only: :test}
+      {:membrane_file_plugin, "~> 0.15.0", only: :test},
+      {:elixir_make, "~> 0.6", runtime: false}
     ]
   end
 end
