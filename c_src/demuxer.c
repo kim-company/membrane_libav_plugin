@@ -13,6 +13,8 @@
 
 // TODO instead of using a super large file here
 #define IO_BUF_SIZE 709944912
+// #define IO_BUF_SIZE 6724936
+// #define IO_BUF_SIZE 28 + 584
 
 ErlNifResourceType *CTX_RES_TYPE;
 
@@ -25,6 +27,9 @@ typedef struct {
   AVIOContext *io_ctx;
   // The actual libAV demuxer.
   AVFormatContext *fmt_ctx;
+
+  int size;
+  int streams_detected;
 } Ctx;
 
 int read_packet(void *opaque, uint8_t *buf, int buf_size) {
@@ -86,6 +91,8 @@ ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
   ctx->queue = queue;
   ctx->io_ctx = io_ctx;
   ctx->fmt_ctx = fmt_ctx;
+  ctx->size = AV_BUF_SIZE;
+  ctx->streams_detected = 0;
 
   // Make the resource take ownership on the context.
   Ctx **ctx_res = enif_alloc_resource(CTX_RES_TYPE, sizeof(Ctx *));
@@ -138,6 +145,11 @@ ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
 
   get_ctx(env, argv[0], &ctx);
 
+  // const AVInputFormat *input_fmt = NULL;
+  // av_probe_input_buffer2(ctx->io_ctx, &input_fmt, NULL, NULL, 0,
+  // IO_BUF_SIZE); input_fmt->read_header(ctx->fmt_ctx);
+
+  // This call succeeds when it is able to read the full header.
   errnum = avformat_open_input(&ctx->fmt_ctx, NULL, NULL, NULL);
   if (errnum != 0) {
     goto open_input_err;
