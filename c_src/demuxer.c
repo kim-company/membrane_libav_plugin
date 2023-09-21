@@ -1,5 +1,6 @@
 #include "erl_drv_nif.h"
 #include "libavcodec/codec_id.h"
+#include "libavcodec/packet.h"
 #include <erl_nif.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -12,7 +13,7 @@
 #define AV_BUF_SIZE 48000
 
 // TODO instead of using a super large file here
-#define IO_BUF_SIZE 709944912
+// #define IO_BUF_SIZE 709944912
 // #define IO_BUF_SIZE 6724936
 // #define IO_BUF_SIZE 28 + 584
 
@@ -29,30 +30,9 @@ typedef struct {
   AVFormatContext *fmt_ctx;
 
   int size;
-  int streams_detected;
+  int has_header;
+  int queue_skip;
 } Ctx;
-
-int read_packet(void *opaque, uint8_t *buf, int buf_size) {
-  ErlNifIOQueue *queue;
-  SysIOVec *vec;
-  int size;
-  int nb_elem;
-
-  queue = (ErlNifIOQueue *)opaque;
-  size = enif_ioq_size(queue);
-
-  vec = enif_ioq_peek(queue, &nb_elem);
-  if (!nb_elem)
-    return AVERROR_EOF;
-
-  size = buf_size > vec->iov_len ? vec->iov_len : buf_size;
-
-  memcpy(buf, vec->iov_base, size);
-  // Remove the data from the queue once read.
-  enif_ioq_deq(queue, size, NULL);
-
-  return size;
-}
 
 void free_ctx_res(ErlNifEnv *env, void *res) {
   Ctx **ctx = (Ctx **)res;
@@ -76,23 +56,81 @@ int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
   return 0;
 }
 
+int read_ioq(void *opaque, uint8_t *buf, int buf_size) {
+  Ctx *ctx;
+  SysIOVec *vec;
+  int size;
+  int nb_elem;
+
+  ctx = (Ctx *)opaque;
+  size = enif_ioq_size(ctx->queue);
+  if (size <= ctx->queue_skip)
+    return AVERROR_EOF;
+
+  vec = enif_ioq_peek(ctx->queue, &nb_elem);
+  if (!nb_elem)
+    return AVERROR_EOF;
+
+  size = buf_size > vec->iov_len ? vec->iov_len : buf_size;
+
+  memcpy(buf, vec->iov_base + ctx->queue_skip, size);
+
+  // Only dequee the data once the streams have been detected. Before
+  // that point, the buffer is reused and hence we use the temporary
+  // queue_skip value to hide the data that was read already.
+  if (ctx->has_header) {
+    enif_ioq_deq(ctx->queue, size, NULL);
+  } else {
+    ctx->queue_skip += size;
+  }
+
+  return size;
+}
+
+int read_header(Ctx *ctx) {
+  AVIOContext *io_ctx;
+  AVFormatContext *fmt_ctx;
+  void *io_buffer;
+  int errnum;
+  int ret;
+
+  // TODO can we avoid allocating this buffer each time we do a read attempt?
+  io_buffer = av_malloc(AV_BUF_SIZE);
+  // Context that reads from queue and uses io_buffer as scratch space.
+  io_ctx =
+      avio_alloc_context(io_buffer, AV_BUF_SIZE, 0, ctx, &read_ioq, NULL, NULL);
+  fmt_ctx = avformat_alloc_context();
+  fmt_ctx->pb = io_ctx;
+
+  if ((errnum = avformat_open_input(&fmt_ctx, NULL, NULL, NULL)))
+    goto open_error;
+
+  if ((errnum = avformat_find_stream_info(fmt_ctx, NULL)))
+    goto open_error;
+
+  ctx->has_header = 1;
+  ctx->queue_skip = 0;
+  ctx->io_ctx = io_ctx;
+  ctx->fmt_ctx = fmt_ctx;
+  return errnum;
+
+open_error:
+  avio_context_free(&io_ctx);
+  avformat_free_context(fmt_ctx);
+  ctx->size *= 2;
+  ctx->queue_skip = 0;
+  return errnum;
+}
+
 ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
                            const ERL_NIF_TERM argv[]) {
   ErlNifIOQueue *queue = enif_ioq_create(ERL_NIF_IOQ_NORMAL);
-  // Freed by io_ctx.
-  void *io_buffer = av_malloc(AV_BUF_SIZE);
-  // Context that reads from queue and uses io_buffer as scratch space.
-  AVIOContext *io_ctx = avio_alloc_context(io_buffer, AV_BUF_SIZE, 0, queue,
-                                           &read_packet, NULL, NULL);
-  AVFormatContext *fmt_ctx = avformat_alloc_context();
-  fmt_ctx->pb = io_ctx;
 
   Ctx *ctx = (Ctx *)malloc(sizeof(Ctx));
   ctx->queue = queue;
-  ctx->io_ctx = io_ctx;
-  ctx->fmt_ctx = fmt_ctx;
   ctx->size = AV_BUF_SIZE;
-  ctx->streams_detected = 0;
+  ctx->has_header = 0;
+  ctx->queue_skip = 0;
 
   // Make the resource take ownership on the context.
   Ctx **ctx_res = enif_alloc_resource(CTX_RES_TYPE, sizeof(Ctx *));
@@ -117,6 +155,10 @@ ERL_NIF_TERM add_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   // data is owned by the ioq from this point on.
   enif_ioq_enq_binary(ctx->queue, &binary, 0);
 
+  // Make an attemp reading the header only when the ioq buffer is filled.
+  if (!ctx->has_header && enif_ioq_size(ctx->queue) >= ctx->size)
+    read_header(ctx);
+
   return enif_make_atom(env, "ok");
 }
 
@@ -124,38 +166,38 @@ ERL_NIF_TERM is_ready(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   get_ctx(env, argv[0], &ctx);
 
-  return (enif_ioq_size(ctx->queue) >= IO_BUF_SIZE)
-             ? enif_make_atom(env, "true")
-             : enif_make_atom(env, "false");
+  return ctx->has_header ? enif_make_atom(env, "true")
+                         : enif_make_atom(env, "false");
 }
 
-ERL_NIF_TERM demand(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  Ctx *ctx;
-  get_ctx(env, argv[0], &ctx);
+// ERL_NIF_TERM read_packet(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+// {
+//   Ctx *ctx;
+//   AVPacket *packet;
+//   int errnum;
 
-  return enif_make_int(env, IO_BUF_SIZE - enif_ioq_size(ctx->queue));
-}
+//   get_ctx(env, argv[0], &ctx);
+//   errnum = av_read_frame(ctx->fmt_ctx, packet);
+// }
 
-ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
-                            const ERL_NIF_TERM argv[]) {
-  int errnum;
-  char err[256];
+ERL_NIF_TERM streams(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   ERL_NIF_TERM *codecs;
+  int errnum;
+  char err[256];
 
   get_ctx(env, argv[0], &ctx);
 
-  // const AVInputFormat *input_fmt = NULL;
-  // av_probe_input_buffer2(ctx->io_ctx, &input_fmt, NULL, NULL, 0,
-  // IO_BUF_SIZE); input_fmt->read_header(ctx->fmt_ctx);
-
-  // This call succeeds when it is able to read the full header.
-  errnum = avformat_open_input(&ctx->fmt_ctx, NULL, NULL, NULL);
-  if (errnum != 0) {
-    goto open_input_err;
+  // Called on EOS: we're not ready, meaning that we did not get
+  // the amount of data we wanted, but we may still be able to
+  // obtain the streams.
+  if (!ctx->has_header) {
+    if ((errnum = read_header(ctx))) {
+      av_strerror(errnum, err, sizeof(err));
+      return enif_make_tuple2(env, enif_make_atom(env, "error"),
+                              enif_make_string(env, err, ERL_NIF_UTF8));
+    }
   }
-
-  avformat_find_stream_info(ctx->fmt_ctx, NULL);
 
   codecs = calloc(ctx->fmt_ctx->nb_streams, sizeof(ERL_NIF_TERM));
   for (int i = 0; i < ctx->fmt_ctx->nb_streams; i++) {
@@ -177,11 +219,13 @@ ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
   return enif_make_tuple2(
       env, enif_make_atom(env, "ok"),
       enif_make_list_from_array(env, codecs, ctx->fmt_ctx->nb_streams));
+}
 
-open_input_err:
-  av_strerror(errnum, err, sizeof(err));
-  return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                          enif_make_string(env, err, ERL_NIF_UTF8));
+ERL_NIF_TERM demand(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  Ctx *ctx;
+  get_ctx(env, argv[0], &ctx);
+
+  return enif_make_int(env, ctx->size - enif_ioq_size(ctx->queue));
 }
 
 static ErlNifFunc nif_funcs[] = {
@@ -190,7 +234,7 @@ static ErlNifFunc nif_funcs[] = {
     {"add_data", 2, add_data},
     {"is_ready", 1, is_ready},
     {"demand", 1, demand},
-    {"detect_streams", 1, detect_streams},
+    {"streams", 1, streams},
 };
 
 ERL_NIF_INIT(Elixir.Membrane.LibAV.Demuxer.Nif, nif_funcs, load, NULL, NULL,

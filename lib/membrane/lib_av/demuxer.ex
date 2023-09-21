@@ -44,7 +44,7 @@ defmodule Membrane.LibAV.Demuxer do
   def handle_end_of_stream(:input, _ctx, state = %{format_detected?: false}) do
     # We cannot wait for the demuxer to become ready, we need to
     # try with what we've collected.
-    detect_streams(state)
+    publish_streams(state)
   end
 
   def handle_end_of_stream(:input, _ctx, state) do
@@ -58,7 +58,7 @@ defmodule Membrane.LibAV.Demuxer do
     :ok = Nif.add_data(state.ctx, buffer.payload)
 
     if Nif.is_ready(state.ctx) do
-      detect_streams(state)
+      publish_streams(state)
     else
       {[demand: {:input, Nif.demand(state.ctx)}], state}
     end
@@ -70,9 +70,11 @@ defmodule Membrane.LibAV.Demuxer do
   #   {:ok, codecs} = Nif.detect_streams(state.ctx)
   # end
 
-  defp detect_streams(state) do
-    case Nif.detect_streams(state.ctx) do
+  defp publish_streams(state) do
+    case Nif.streams(state.ctx) do
       {:ok, streams} ->
+        Membrane.Logger.warning("Streams detected: #{inspect(streams)}")
+
         actions =
           Enum.map(streams, fn {codec, stream_index} ->
             {:notify_parent,
