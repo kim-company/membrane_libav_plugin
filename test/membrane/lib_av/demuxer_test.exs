@@ -4,10 +4,10 @@ defmodule Membrane.LibAV.DemuxerTest do
   import Membrane.ChildrenSpec
 
   @testfiles [
-    {"test/data/safari.mp4", "aac"},
-    {"/Users/dmorn/projects/video-taxi-pepe-demo/test/data/babylon-30s-talk.mp4", "aac"},
-    {"/Users/dmorn/projects/video-taxi-pepe-demo/test/data/babylon-30s-talk.ogg", "opus"}
-    # {"/Users/dmorn/Downloads/multi-lang.mp4", "aac"}
+    # {"test/data/safari.mp4", "aac"},
+    # {"/Users/dmorn/projects/video-taxi-pepe-demo/test/data/babylon-30s-talk.mp4", "aac"},
+    # {"/Users/dmorn/projects/video-taxi-pepe-demo/test/data/babylon-30s-talk.ogg", "opus"}
+    {"/Users/dmorn/Downloads/multi-lang.mp4", "aac"}
   ]
 
   describe "demuxer" do

@@ -105,7 +105,7 @@ int read_header(Ctx *ctx) {
   if ((errnum = avformat_open_input(&fmt_ctx, NULL, NULL, NULL)))
     goto open_error;
 
-  if ((errnum = avformat_find_stream_info(fmt_ctx, NULL)))
+  if ((errnum = avformat_find_stream_info(fmt_ctx, NULL)) < 0)
     goto open_error;
 
   ctx->has_header = 1;
