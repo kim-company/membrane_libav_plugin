@@ -10,7 +10,9 @@
 
 // Arbitrary choice.
 #define AV_BUF_SIZE 48000
-#define IO_BUF_SIZE 48000
+
+// TODO instead of using a super large file here
+#define IO_BUF_SIZE 709944912
 
 ErlNifResourceType *CTX_RES_TYPE;
 
@@ -136,7 +138,7 @@ ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
 
   get_ctx(env, argv[0], &ctx);
 
-  errnum = avformat_open_input(&ctx->fmt_ctx, "", NULL, NULL);
+  errnum = avformat_open_input(&ctx->fmt_ctx, NULL, NULL, NULL);
   if (errnum != 0) {
     goto open_input_err;
   }

@@ -2,8 +2,8 @@ defmodule Membrane.LibAV.Demuxer do
   use Membrane.Filter
   alias Membrane.LibAV.Demuxer.Nif
 
-  # TODO
-  # might be an idea to ask for bytes instead of buffers.
+  require Membrane.Logger
+
   def_input_pad(:input,
     availability: :always,
     accepted_format: Membrane.RemoteStream,
@@ -41,21 +41,24 @@ defmodule Membrane.LibAV.Demuxer do
   end
 
   @impl true
+  def handle_end_of_stream(:input, _ctx, state = %{format_detected?: false}) do
+    # We cannot wait for the demuxer to become ready, we need to
+    # try with what we've collected.
+    detect_streams(state)
+  end
+
+  def handle_end_of_stream(:input, _ctx, state) do
+    # EOS is controlled by the internal demuxer.
+    {[], state}
+  end
+
+  @impl true
   def handle_buffer(:input, buffer, _ctx, state = %{format_detected?: false}) do
+    Membrane.Logger.debug("Received #{inspect(byte_size(buffer.payload))} bytes")
     :ok = Nif.add_data(state.ctx, buffer.payload)
 
     if Nif.is_ready(state.ctx) do
-      {:ok, streams} = Nif.detect_streams(state.ctx)
-
-      actions =
-        Enum.map(streams, fn {codec, stream_index} ->
-          {:notify_parent,
-           {:new_stream, %{codec_name: to_string(codec), stream_index: stream_index}}}
-        end)
-
-      # We're not sending any demand till a pad is connected and
-      # asks for it.
-      {actions, %{state | format_detected?: true}}
+      detect_streams(state)
     else
       {[demand: {:input, Nif.demand(state.ctx)}], state}
     end
@@ -66,4 +69,22 @@ defmodule Membrane.LibAV.Demuxer do
   #   :ok = Nif.add_data(state.ctx, buffer.payload)
   #   {:ok, codecs} = Nif.detect_streams(state.ctx)
   # end
+
+  defp detect_streams(state) do
+    case Nif.detect_streams(state.ctx) do
+      {:ok, streams} ->
+        actions =
+          Enum.map(streams, fn {codec, stream_index} ->
+            {:notify_parent,
+             {:new_stream, %{codec_name: to_string(codec), stream_index: stream_index}}}
+          end)
+
+        # We're not sending any demand till a pad is connected and
+        # asks for it.
+        {actions, %{state | format_detected?: true}}
+
+      {:error, reason} ->
+        raise to_string(reason)
+    end
+  end
 end
