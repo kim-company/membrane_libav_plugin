@@ -10,7 +10,8 @@
 #include <string.h>
 
 // Arbitrary choice.
-#define AV_BUF_SIZE 48000
+// #define AV_BUF_SIZE 48000
+#define AV_BUF_SIZE 6724936
 
 // TODO instead of using a super large file here
 // #define IO_BUF_SIZE 709944912
@@ -20,25 +21,44 @@
 ErlNifResourceType *CTX_RES_TYPE;
 
 typedef struct {
+  void *ptr;
+  // The total size of ptr
+  int size;
+  // Where the next bytes should be written at.
+  int buf_end;
+
+  // position of the last read.
+  int pos;
+} Ioq;
+
+int queue_is_filled(Ioq *q) { return q->buf_end == q->size; }
+
+void queue_copy(Ioq *q, void *src, int size) {
+  // Do we have enough space for the data? If not, reallocate some space.
+  memcpy(q->ptr + q->buf_end, src, size);
+  q->buf_end += size;
+}
+
+void queue_grow(Ioq *q, int factor) {}
+
+typedef struct {
   // Used to write binary data coming from membrane and as source for the
   // AVFormatContext.
-  ErlNifIOQueue *queue;
+  Ioq *queue;
   // The context responsible for reading data from the queue. It is
   // configured to use the read_packet function as source.
   AVIOContext *io_ctx;
   // The actual libAV demuxer.
   AVFormatContext *fmt_ctx;
 
-  int size;
   int has_header;
-  int queue_skip;
 } Ctx;
 
 void free_ctx_res(ErlNifEnv *env, void *res) {
   Ctx **ctx = (Ctx **)res;
-  enif_ioq_destroy((*ctx)->queue);
+  free((*ctx)->queue->ptr);
   avio_context_free(&(*ctx)->io_ctx);
-  avformat_free_context((*ctx)->fmt_ctx);
+  avformat_close_input(&(*ctx)->fmt_ctx);
   free(*ctx);
 }
 
@@ -58,30 +78,21 @@ int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
 
 int read_ioq(void *opaque, uint8_t *buf, int buf_size) {
   Ctx *ctx;
-  SysIOVec *vec;
-  int size;
-  int nb_elem;
+  int size, avail;
 
   ctx = (Ctx *)opaque;
-  size = enif_ioq_size(ctx->queue);
-  if (size <= ctx->queue_skip)
+  avail = ctx->queue->buf_end - ctx->queue->pos;
+  if (avail <= 0)
     return AVERROR_EOF;
 
-  vec = enif_ioq_peek(ctx->queue, &nb_elem);
-  if (!nb_elem)
-    return AVERROR_EOF;
+  size = buf_size > avail ? avail : buf_size;
 
-  size = buf_size > vec->iov_len ? vec->iov_len : buf_size;
+  memcpy(buf, ctx->queue->ptr + ctx->queue->pos, size);
+  ctx->queue->pos += size;
 
-  memcpy(buf, vec->iov_base + ctx->queue_skip, size);
-
-  // Only dequee the data once the streams have been detected. Before
-  // that point, the buffer is reused and hence we use the temporary
-  // queue_skip value to hide the data that was read already.
   if (ctx->has_header) {
-    enif_ioq_deq(ctx->queue, size, NULL);
-  } else {
-    ctx->queue_skip += size;
+    // TODO: the data needs to be shifted to the start of
+    // the list, deleting the old entries.
   }
 
   return size;
@@ -99,8 +110,11 @@ int read_header(Ctx *ctx) {
   // Context that reads from queue and uses io_buffer as scratch space.
   io_ctx =
       avio_alloc_context(io_buffer, AV_BUF_SIZE, 0, ctx, &read_ioq, NULL, NULL);
+  io_ctx->seekable = 0;
+
   fmt_ctx = avformat_alloc_context();
   fmt_ctx->pb = io_ctx;
+  fmt_ctx->probesize = ctx->queue->size;
 
   if ((errnum = avformat_open_input(&fmt_ctx, NULL, NULL, NULL)))
     goto open_error;
@@ -109,28 +123,29 @@ int read_header(Ctx *ctx) {
     goto open_error;
 
   ctx->has_header = 1;
-  ctx->queue_skip = 0;
   ctx->io_ctx = io_ctx;
   ctx->fmt_ctx = fmt_ctx;
   return errnum;
 
 open_error:
   avio_context_free(&io_ctx);
-  avformat_free_context(fmt_ctx);
-  ctx->size *= 2;
-  ctx->queue_skip = 0;
+  avformat_close_input(&fmt_ctx);
+  queue_grow(ctx->queue, 2);
+
   return errnum;
 }
 
 ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
                            const ERL_NIF_TERM argv[]) {
-  ErlNifIOQueue *queue = enif_ioq_create(ERL_NIF_IOQ_NORMAL);
+  Ioq *queue = (Ioq *)malloc(sizeof(Ioq));
+  queue->ptr = malloc(AV_BUF_SIZE);
+  queue->size = AV_BUF_SIZE;
+  queue->pos = 0;
+  queue->buf_end = 0;
 
   Ctx *ctx = (Ctx *)malloc(sizeof(Ctx));
   ctx->queue = queue;
-  ctx->size = AV_BUF_SIZE;
   ctx->has_header = 0;
-  ctx->queue_skip = 0;
 
   // Make the resource take ownership on the context.
   Ctx **ctx_res = enif_alloc_resource(CTX_RES_TYPE, sizeof(Ctx *));
@@ -150,13 +165,15 @@ ERL_NIF_TERM add_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   ErlNifBinary binary;
 
   get_ctx(env, argv[0], &ctx);
-
   enif_inspect_binary(env, argv[1], &binary);
-  // data is owned by the ioq from this point on.
-  enif_ioq_enq_binary(ctx->queue, &binary, 0);
+
+  // Copy the data in the buffer.
+  queue_copy(ctx->queue, binary.data, binary.size);
+
+  // TODO: release the binary? Do we have to?
 
   // Make an attemp reading the header only when the ioq buffer is filled.
-  if (!ctx->has_header && enif_ioq_size(ctx->queue) >= ctx->size)
+  if (!ctx->has_header && queue_is_filled(ctx->queue))
     read_header(ctx);
 
   return enif_make_atom(env, "ok");
@@ -225,7 +242,7 @@ ERL_NIF_TERM demand(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   get_ctx(env, argv[0], &ctx);
 
-  return enif_make_int(env, ctx->size - enif_ioq_size(ctx->queue));
+  return enif_make_int(env, ctx->queue->size - ctx->queue->buf_end);
 }
 
 static ErlNifFunc nif_funcs[] = {
