@@ -20,4 +20,8 @@ defmodule Membrane.LibAV.Demuxer.Nif do
   def is_ready(_ctx) do
     raise "NIF is_ready/1 not implemented"
   end
+
+  def demand(_ctx) do
+    raise "NIF demand/1 not implemented"
+  end
 end

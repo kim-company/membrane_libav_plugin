@@ -7,7 +7,8 @@ defmodule Membrane.LibAV.Demuxer do
   def_input_pad(:input,
     availability: :always,
     accepted_format: Membrane.RemoteStream,
-    flow_control: :manual
+    flow_control: :manual,
+    demand_unit: :bytes
   )
 
   def_output_pad(:output,
@@ -29,7 +30,7 @@ defmodule Membrane.LibAV.Demuxer do
   def handle_playing(_ctx, state) do
     # Start by asking some buffers, which are going to be used
     # to discover the available streams.
-    {[demand: {:input, 1}], state}
+    {[demand: {:input, Nif.demand(state.ctx)}], state}
   end
 
   @impl true
@@ -41,11 +42,9 @@ defmodule Membrane.LibAV.Demuxer do
 
   @impl true
   def handle_buffer(:input, buffer, _ctx, state = %{format_detected?: false}) do
-    IO.inspect([pts: buffer.pts, size: byte_size(buffer.payload)], label: "BUFFER RECEIVED")
     :ok = Nif.add_data(state.ctx, buffer.payload)
-    ready = Nif.is_ready(state.ctx) |> IO.inspect(label: "IS READY")
 
-    if ready > 0 do
+    if Nif.is_ready(state.ctx) do
       {:ok, streams} = Nif.detect_streams(state.ctx)
 
       actions =
@@ -58,7 +57,7 @@ defmodule Membrane.LibAV.Demuxer do
       # asks for it.
       {actions, %{state | format_detected?: true}}
     else
-      {[demand: {:input, 1}], state}
+      {[demand: {:input, Nif.demand(state.ctx)}], state}
     end
   end
 

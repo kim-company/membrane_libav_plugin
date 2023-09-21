@@ -115,7 +115,16 @@ ERL_NIF_TERM is_ready(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   get_ctx(env, argv[0], &ctx);
 
-  return enif_make_int(env, enif_ioq_size(ctx->queue) >= IO_BUF_SIZE);
+  return (enif_ioq_size(ctx->queue) >= IO_BUF_SIZE)
+             ? enif_make_atom(env, "true")
+             : enif_make_atom(env, "false");
+}
+
+ERL_NIF_TERM demand(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  Ctx *ctx;
+  get_ctx(env, argv[0], &ctx);
+
+  return enif_make_int(env, IO_BUF_SIZE - enif_ioq_size(ctx->queue));
 }
 
 ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
@@ -166,6 +175,7 @@ static ErlNifFunc nif_funcs[] = {
     {"alloc_context", 0, alloc_context},
     {"add_data", 2, add_data},
     {"is_ready", 1, is_ready},
+    {"demand", 1, demand},
     {"detect_streams", 1, detect_streams},
 };
 
