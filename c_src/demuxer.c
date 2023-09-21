@@ -1,12 +1,15 @@
 #include "erl_drv_nif.h"
+#include "libavcodec/codec_id.h"
 #include <erl_nif.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
+#include <libavutil/error.h>
 #include <stddef.h>
 #include <string.h>
 
 // Arbitrary choice.
+#define AV_BUF_SIZE 48000
 #define IO_BUF_SIZE 48000
 
 ErlNifResourceType *CTX_RES_TYPE;
@@ -26,21 +29,22 @@ int read_packet(void *opaque, uint8_t *buf, int buf_size) {
   ErlNifIOQueue *queue;
   SysIOVec *vec;
   int size;
+  int nb_elem;
 
   queue = (ErlNifIOQueue *)opaque;
   size = enif_ioq_size(queue);
 
-  // Take the minimum value, we cannot extract more bytes from the queue than
-  // the available ones.
-  size = buf_size > size ? size : buf_size;
-  vec = enif_ioq_peek(queue, &size);
+  vec = enif_ioq_peek(queue, &nb_elem);
+  if (!nb_elem)
+    return AVERROR_EOF;
 
-  memcpy(buf, vec->iov_base, vec->iov_len);
+  size = buf_size > vec->iov_len ? vec->iov_len : buf_size;
 
-  // TODO: dequeue the data that was read.
-  // enif_ioq_deq(queue, size, NULL);
+  memcpy(buf, vec->iov_base, size);
+  // Remove the data from the queue once read.
+  enif_ioq_deq(queue, size, NULL);
 
-  return vec->iov_len;
+  return size;
 }
 
 void free_ctx_res(ErlNifEnv *env, void *res) {
@@ -67,14 +71,12 @@ int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
 
 ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
                            const ERL_NIF_TERM argv[]) {
-  // Freed by io_ctx.
-  void *io_buffer = av_malloc(IO_BUF_SIZE);
   ErlNifIOQueue *queue = enif_ioq_create(ERL_NIF_IOQ_NORMAL);
-
+  // Freed by io_ctx.
+  void *io_buffer = av_malloc(AV_BUF_SIZE);
   // Context that reads from queue and uses io_buffer as scratch space.
-  AVIOContext *io_ctx = avio_alloc_context(io_buffer, IO_BUF_SIZE, 0, queue,
-                                           read_packet, NULL, NULL);
-
+  AVIOContext *io_ctx = avio_alloc_context(io_buffer, AV_BUF_SIZE, 0, queue,
+                                           &read_packet, NULL, NULL);
   AVFormatContext *fmt_ctx = avformat_alloc_context();
   fmt_ctx->pb = io_ctx;
 
@@ -101,35 +103,69 @@ ERL_NIF_TERM add_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   ErlNifBinary binary;
 
   get_ctx(env, argv[0], &ctx);
-  enif_inspect_binary(env, argv[1], &binary);
 
+  enif_inspect_binary(env, argv[1], &binary);
   // data is owned by the ioq from this point on.
   enif_ioq_enq_binary(ctx->queue, &binary, 0);
 
-  // In theory we do not have to return the ctx as we're mutating that directly.
   return enif_make_atom(env, "ok");
+}
+
+ERL_NIF_TERM is_ready(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  Ctx *ctx;
+  get_ctx(env, argv[0], &ctx);
+
+  return enif_make_int(env, enif_ioq_size(ctx->queue) >= IO_BUF_SIZE);
 }
 
 ERL_NIF_TERM detect_streams(ErlNifEnv *env, int argc,
                             const ERL_NIF_TERM argv[]) {
+  int errnum;
+  char err[256];
   Ctx *ctx;
+  ERL_NIF_TERM *codecs;
 
   get_ctx(env, argv[0], &ctx);
 
-  // TODO open input should not be called more than once.
-  avformat_open_input(&ctx->fmt_ctx, "", NULL, NULL);
+  errnum = avformat_open_input(&ctx->fmt_ctx, "", NULL, NULL);
+  if (errnum != 0) {
+    goto open_input_err;
+  }
+
   avformat_find_stream_info(ctx->fmt_ctx, NULL);
 
-  // TODO: create an array of available streams and send it back.
+  codecs = calloc(ctx->fmt_ctx->nb_streams, sizeof(ERL_NIF_TERM));
+  for (int i = 0; i < ctx->fmt_ctx->nb_streams; i++) {
+    ERL_NIF_TERM codec_term;
+    ErlNifBinary *binary;
+    AVStream *av_stream;
+    const char *codec_name;
 
-  return enif_make_atom(env, "ok");
+    // TODO: wrap the codec in a resource, it will be used later.
+
+    av_stream = ctx->fmt_ctx->streams[i];
+    codec_name = avcodec_get_name(av_stream->codecpar->codec_id);
+
+    codecs[i] =
+        enif_make_tuple2(env, enif_make_string(env, codec_name, ERL_NIF_UTF8),
+                         enif_make_int(env, av_stream->index));
+  }
+
+  return enif_make_tuple2(
+      env, enif_make_atom(env, "ok"),
+      enif_make_list_from_array(env, codecs, ctx->fmt_ctx->nb_streams));
+
+open_input_err:
+  av_strerror(errnum, err, sizeof(err));
+  return enif_make_tuple2(env, enif_make_atom(env, "error"),
+                          enif_make_string(env, err, ERL_NIF_UTF8));
 }
 
-// Let's define the array of ErlNifFunc beforehand:
 static ErlNifFunc nif_funcs[] = {
     // {erl_function_name, erl_function_arity, c_function}
     {"alloc_context", 0, alloc_context},
     {"add_data", 2, add_data},
+    {"is_ready", 1, is_ready},
     {"detect_streams", 1, detect_streams},
 };
 
