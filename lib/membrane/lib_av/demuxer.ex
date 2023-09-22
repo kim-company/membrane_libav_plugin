@@ -74,6 +74,14 @@ defmodule Membrane.LibAV.Demuxer do
   # before the second is attached and we try to fullfill the demand. There, we
   # probably throw away data that is needed for the second output.
 
+  # TODO
+  # * we need a function that loads buffers inside the state as long as the
+  #   demuxer is not requesting any data
+  # * function that fulfills the demand. It is also responsible for asking for demand
+  #   and publishing the end_of_stream message, as it knows which pads are complete
+  # * function that asks for demand
+  # * function that releases all stored data in one shot (for end_of_stream)
+
   @impl true
   def handle_demand(pad = {Membrane.Pad, :output, stream_index}, _size, :buffers, ctx, state) do
     state = flush_demuxer(ctx, state)
