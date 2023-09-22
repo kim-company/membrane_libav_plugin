@@ -8,10 +8,11 @@
 #include <libavutil/error.h>
 #include <stddef.h>
 #include <string.h>
+#include <sys/types.h>
 
 // Arbitrary choice.
-// #define AV_BUF_SIZE 48000
-#define AV_BUF_SIZE 6724936
+#define AV_BUF_SIZE 48000
+// #define AV_BUF_SIZE 6724936
 
 // TODO instead of using a super large file here
 // #define IO_BUF_SIZE 709944912
@@ -23,23 +24,33 @@ ErlNifResourceType *CTX_RES_TYPE;
 typedef struct {
   void *ptr;
   // The total size of ptr
-  int size;
+  u_long size;
   // Where the next bytes should be written at.
-  int buf_end;
+  u_long buf_end;
 
   // position of the last read.
-  int pos;
+  u_long pos;
 } Ioq;
 
 int queue_is_filled(Ioq *q) { return q->buf_end == q->size; }
+int queue_avail(Ioq *q) { return q->size - q->buf_end; }
+
+void queue_grow(Ioq *q, int factor) {
+  u_long new_size;
+
+  new_size = q->size * factor;
+  q->ptr = realloc(q->ptr, new_size);
+  q->size = new_size;
+}
 
 void queue_copy(Ioq *q, void *src, int size) {
   // Do we have enough space for the data? If not, reallocate some space.
+  if (queue_avail(q) < size)
+    queue_grow(q, 2);
+
   memcpy(q->ptr + q->buf_end, src, size);
   q->buf_end += size;
 }
-
-void queue_grow(Ioq *q, int factor) {}
 
 typedef struct {
   // Used to write binary data coming from membrane and as source for the
@@ -130,7 +141,9 @@ int read_header(Ctx *ctx) {
 open_error:
   avio_context_free(&io_ctx);
   avformat_close_input(&fmt_ctx);
+
   queue_grow(ctx->queue, 2);
+  ctx->queue->pos = 0;
 
   return errnum;
 }
