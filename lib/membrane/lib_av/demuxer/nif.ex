@@ -24,4 +24,8 @@ defmodule Membrane.LibAV.Demuxer.Nif do
   def demand(_ctx) do
     raise "NIF demand/1 not implemented"
   end
+
+  def read_packet(_ctx) do
+    raise "NIF read_packet/1 not implemented"
+  end
 end

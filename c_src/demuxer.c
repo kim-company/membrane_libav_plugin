@@ -11,15 +11,11 @@
 #include <sys/types.h>
 
 // Arbitrary choice.
-#define AV_BUF_SIZE 48000
-// #define AV_BUF_SIZE 6724936
-
-// TODO instead of using a super large file here
-// #define IO_BUF_SIZE 709944912
-// #define IO_BUF_SIZE 6724936
-// #define IO_BUF_SIZE 28 + 584
+#define IO_BUF_SIZE 48000
 
 ErlNifResourceType *CTX_RES_TYPE;
+
+typedef enum { QUEUE_MODE_SHIFT, QUEUE_MODE_GROW } QUEUE_MODE;
 
 typedef struct {
   void *ptr;
@@ -30,10 +26,16 @@ typedef struct {
 
   // position of the last read.
   u_long pos;
+
+  // Used to differentiate wether the queue is removing
+  // the bytes each time they're read or it is growing to
+  // accomodate more. The latter is used when probing the
+  // input to find the header.
+  QUEUE_MODE mode;
 } Ioq;
 
 int queue_is_filled(Ioq *q) { return q->buf_end == q->size; }
-int queue_avail(Ioq *q) { return q->size - q->buf_end; }
+int queue_freespace(Ioq *q) { return q->size - q->buf_end; }
 
 void queue_grow(Ioq *q, int factor) {
   u_long new_size;
@@ -45,11 +47,40 @@ void queue_grow(Ioq *q, int factor) {
 
 void queue_copy(Ioq *q, void *src, int size) {
   // Do we have enough space for the data? If not, reallocate some space.
-  if (queue_avail(q) < size)
+  if (queue_freespace(q) < size)
     queue_grow(q, 2);
 
   memcpy(q->ptr + q->buf_end, src, size);
   q->buf_end += size;
+}
+
+int queue_read(Ioq *q, void *dst, int buf_size) {
+  int unread;
+  int size;
+
+  unread = q->buf_end - q->pos;
+  if (unread <= 0)
+    return AVERROR_EOF;
+
+  size = buf_size > unread ? unread : buf_size;
+  memcpy(dst, q->ptr + q->pos, size);
+  q->pos += size;
+
+  return size;
+}
+
+void queue_deq(Ioq *q) {
+  int unread;
+
+  unread = q->buf_end - q->pos;
+  if (unread == 0) {
+    q->pos = 0;
+    q->buf_end = 0;
+  } else {
+    memmove(q->ptr, q->ptr + q->pos, unread);
+    q->pos = 0;
+    q->buf_end = unread;
+  }
 }
 
 typedef struct {
@@ -88,25 +119,18 @@ int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
 }
 
 int read_ioq(void *opaque, uint8_t *buf, int buf_size) {
-  Ctx *ctx;
-  int size, avail;
+  Ioq *queue;
+  int ret;
 
-  ctx = (Ctx *)opaque;
-  avail = ctx->queue->buf_end - ctx->queue->pos;
-  if (avail <= 0)
-    return AVERROR_EOF;
+  queue = (Ioq *)opaque;
 
-  size = buf_size > avail ? avail : buf_size;
+  if ((ret = queue_read(queue, buf, buf_size)) < 0)
+    return ret;
 
-  memcpy(buf, ctx->queue->ptr + ctx->queue->pos, size);
-  ctx->queue->pos += size;
+  if (queue->mode == QUEUE_MODE_SHIFT)
+    queue_deq(queue);
 
-  if (ctx->has_header) {
-    // TODO: the data needs to be shifted to the start of
-    // the list, deleting the old entries.
-  }
-
-  return size;
+  return ret;
 }
 
 int read_header(Ctx *ctx) {
@@ -117,10 +141,10 @@ int read_header(Ctx *ctx) {
   int ret;
 
   // TODO can we avoid allocating this buffer each time we do a read attempt?
-  io_buffer = av_malloc(AV_BUF_SIZE);
+  io_buffer = av_malloc(IO_BUF_SIZE);
   // Context that reads from queue and uses io_buffer as scratch space.
-  io_ctx =
-      avio_alloc_context(io_buffer, AV_BUF_SIZE, 0, ctx, &read_ioq, NULL, NULL);
+  io_ctx = avio_alloc_context(io_buffer, IO_BUF_SIZE, 0, ctx->queue, &read_ioq,
+                              NULL, NULL);
   io_ctx->seekable = 0;
 
   fmt_ctx = avformat_alloc_context();
@@ -136,6 +160,10 @@ int read_header(Ctx *ctx) {
   ctx->has_header = 1;
   ctx->io_ctx = io_ctx;
   ctx->fmt_ctx = fmt_ctx;
+
+  queue_deq(ctx->queue);
+  ctx->queue->mode = QUEUE_MODE_SHIFT;
+
   return errnum;
 
 open_error:
@@ -151,8 +179,9 @@ open_error:
 ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
                            const ERL_NIF_TERM argv[]) {
   Ioq *queue = (Ioq *)malloc(sizeof(Ioq));
-  queue->ptr = malloc(AV_BUF_SIZE);
-  queue->size = AV_BUF_SIZE;
+  queue->ptr = malloc(IO_BUF_SIZE);
+  queue->mode = QUEUE_MODE_GROW;
+  queue->size = IO_BUF_SIZE;
   queue->pos = 0;
   queue->buf_end = 0;
 
@@ -200,15 +229,57 @@ ERL_NIF_TERM is_ready(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
                          : enif_make_atom(env, "false");
 }
 
-// ERL_NIF_TERM read_packet(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
-// {
-//   Ctx *ctx;
-//   AVPacket *packet;
-//   int errnum;
+ERL_NIF_TERM read_packet(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  Ctx *ctx;
+  AVPacket *packet;
+  int errnum;
+  char err[256];
 
-//   get_ctx(env, argv[0], &ctx);
-//   errnum = av_read_frame(ctx->fmt_ctx, packet);
-// }
+  packet = av_packet_alloc();
+  get_ctx(env, argv[0], &ctx);
+
+  if ((errnum = av_read_frame(ctx->fmt_ctx, packet)) < 0) {
+    if (errnum == AVERROR_EOF)
+      return enif_make_tuple2(env, enif_make_atom(env, "error"),
+                              enif_make_atom(env, "eof"));
+
+    av_strerror(errnum, err, sizeof(err));
+    return enif_make_tuple2(env, enif_make_atom(env, "error"),
+                            enif_make_string(env, err, ERL_NIF_UTF8));
+  }
+
+  ERL_NIF_TERM keys =
+      enif_make_list(env, 5, enif_make_string(env, "pts", ERL_NIF_UTF8),
+                     enif_make_string(env, "dts", ERL_NIF_UTF8),
+                     enif_make_string(env, "data", ERL_NIF_UTF8),
+                     enif_make_string(env, "duration", ERL_NIF_UTF8),
+                     enif_make_string(env, "stream_index", ERL_NIF_UTF8));
+
+  ERL_NIF_TERM data;
+  void *ptr = enif_make_new_binary(env, packet->size, &data);
+  memcpy(ptr, packet->data, packet->size);
+
+  ERL_NIF_TERM map;
+  map = enif_make_new_map(env);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "stream_index"),
+                    enif_make_long(env, packet->stream_index), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "pts"),
+                    enif_make_long(env, packet->pts), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "dts"),
+                    enif_make_long(env, packet->dts), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "duration"),
+                    enif_make_long(env, packet->duration), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "data"), data, &map);
+
+  av_packet_unref(packet);
+
+  return enif_make_tuple2(env, enif_make_atom(env, "ok"), map);
+}
 
 ERL_NIF_TERM streams(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
@@ -265,6 +336,7 @@ static ErlNifFunc nif_funcs[] = {
     {"is_ready", 1, is_ready},
     {"demand", 1, demand},
     {"streams", 1, streams},
+    {"read_packet", 1, read_packet},
 };
 
 ERL_NIF_INIT(Elixir.Membrane.LibAV.Demuxer.Nif, nif_funcs, load, NULL, NULL,
