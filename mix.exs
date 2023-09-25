@@ -26,8 +26,12 @@ defmodule Membrane.LibAV.MixProject do
     [
       {:membrane_core, "~> 0.12.5"},
       {:membrane_file_plugin, "~> 0.15.0", only: :test},
-      {:membrane_aac_fdk_plugin, "~> 0.16.0", only: :test},
       {:elixir_make, "~> 0.6", runtime: false}
+
+      # TMP deps
+      # {:membrane_aac_plugin, "~> 0.16.1"},
+      # {:membrane_aac_fdk_plugin, "~> 0.16.0", only: :test},
+      # {:membrane_h264_ffmpeg_plugin, "~> 0.29.0", only: :test}
     ]
   end
 

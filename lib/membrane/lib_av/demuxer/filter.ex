@@ -22,34 +22,31 @@ defmodule Membrane.LibAV.Demuxer.Filter do
     {[],
      %{
        ctx: Demuxer.alloc_context(),
-       ctx_eof: false,
        format_detected?: false,
        available_streams: [],
        streams: %{}
      }}
   end
 
-  defp demand(ctx) do
-    Demuxer.demand(ctx)
-  end
-
   @impl true
   def handle_playing(_ctx, state) do
     # Start by asking some buffers, which are going to be used
     # to discover the available streams.
-    {[demand: {:input, demand(state.ctx)}], state}
+    {[demand: {:input, Demuxer.demand(state.ctx)}], state}
   end
 
   @impl true
   def handle_end_of_stream(:input, _ctx, state = %{format_detected?: false}) do
     # We cannot wait for the demuxer to become ready, we need to
     # try with what we've collected.
+    :ok = Demuxer.add_data(state.ctx, nil)
     publish_streams(state)
   end
 
-  def handle_end_of_stream(:input, _ctx, state) do
+  def handle_end_of_stream(:input, ctx, state) do
     # EOS is controlled by the internal demuxer.
-    {[], state}
+    :ok = Demuxer.add_data(state.ctx, nil)
+    demux_buffers(ctx, state)
   end
 
   @impl true
@@ -60,8 +57,8 @@ defmodule Membrane.LibAV.Demuxer.Filter do
   end
 
   @impl true
-  def handle_pad_added(pad = {Membrane.Pad, :output, stream_index}, _ctx, state) do
-    streams = Map.put_new(state.streams, stream_index, [])
+  def handle_pad_added(pad = {Membrane.Pad, :output, _stream_index}, _ctx, state) do
+    streams = Map.put_new(state.streams, pad, [])
     {[stream_format: {pad, %Membrane.RemoteStream{}}], %{state | streams: streams}}
   end
 
@@ -74,142 +71,110 @@ defmodule Membrane.LibAV.Demuxer.Filter do
   # before the second is attached and we try to fullfill the demand. There, we
   # probably throw away data that is needed for the second output.
 
-  # TODO
-  # * we need a function that loads buffers inside the state as long as the
-  #   demuxer is not requesting any data
-  # * function that fulfills the demand. It is also responsible for asking for demand
-  #   and publishing the end_of_stream message, as it knows which pads are complete
-  # * function that asks for demand
-  # * function that releases all stored data in one shot (for end_of_stream)
-
   @impl true
-  def handle_demand(pad = {Membrane.Pad, :output, stream_index}, _size, :buffers, ctx, state) do
-    state = flush_demuxer(ctx, state)
-    buffers = get_in(state, [:streams, stream_index])
-
-    {[buffer: {pad, buffers}, end_of_stream: pad], state}
-
-    # case should_demand_more(ctx, state) do
-    #   {true, demand} ->
-    #     {[demand: {:input, demand}], state}
-
-    #   {false, _} ->
-    #     state = reload_streams(ctx, state)
-    #     {actions, state} = handle_fulfill_demand(ctx, state)
-    #     {actions ++ [demand: {:input, demand(state.ctx)}], state}
-    # end
+  def handle_demand({Membrane.Pad, :output, _stream_index}, _size, :buffers, ctx, state) do
+    demux_buffers(ctx, state)
   end
 
   @impl true
   def handle_buffer(:input, buffer, _ctx, state = %{format_detected?: false}) do
-    Membrane.Logger.debug("Received #{inspect(byte_size(buffer.payload))} bytes")
     :ok = Demuxer.add_data(state.ctx, buffer.payload)
 
     if Demuxer.is_ready(state.ctx) do
       publish_streams(state)
     else
-      {[demand: {:input, demand(state.ctx)}], state}
+      {[demand: {:input, Demuxer.demand(state.ctx)}], state}
     end
   end
 
   def handle_buffer(:input, buffer, ctx, state) do
     :ok = Demuxer.add_data(state.ctx, buffer.payload)
-
-    case should_demand_more(ctx, state) do
-      {true, demand} ->
-        {[demand: {:input, demand}], state}
-
-      {false, _} ->
-        state = reload_streams(ctx, state)
-        {actions, state} = handle_fulfill_demand(ctx, state)
-        {actions ++ [demand: {:input, demand(state.ctx)}], state}
-    end
+    demux_buffers(ctx, state)
   end
 
-  defp should_demand_more(ctx, state) do
-    # The nif does not differentiate a real eof from its buffer being
-    # temporarily empty. For this reason, fill the buffer on demand
-    # first and fulfill the demand when new data is loaded.
-    demand = demand(state.ctx)
-    {demand > 0 and not ctx.pads.input.end_of_stream?, demand}
-  end
+  defp demux_buffers(ctx, state) do
+    {actions, state} =
+      case read_packets(state, []) do
+        {:eof, packets} ->
+          {[], load_packets(ctx, state, packets)}
 
-  defp reload_streams(ctx, state) do
-    tracked = tracked_stream_indexes(ctx)
+        {:demand, demand, packets} ->
+          {[demand: {:input, demand}], load_packets(ctx, state, packets)}
 
-    state =
-      case Demuxer.read_packet(state.ctx) do
-        {:error, :eof} ->
-          %{state | ctx_eof: true}
-
-        {:error, other} ->
-          raise to_string(other)
-
-        {:ok, packet} ->
-          if packet.stream_index not in tracked do
-            Membrane.Logger.warning(
-              "Dropping packet of untracked stream_index #{inspect(packet.stream_index)}"
-            )
-
-            state
-          else
-            buffer =
-              %Membrane.Buffer{
-                pts: packet.pts,
-                dts: packet.pts,
-                payload: packet.data
-              }
-
-            update_in(state, [:streams, packet.stream_index], fn acc ->
-              acc ++ [buffer]
-            end)
-          end
+        {:error, error} ->
+          raise error
       end
 
-    cond do
-      state.ctx_eof -> state
-      demand(state.ctx) == 0 -> reload_streams(ctx, state)
-      true -> state
-    end
-  end
-
-  defp flush_demuxer(ctx, state) do
-    state = reload_streams(ctx, state)
-    if state.ctx_eof, do: state, else: flush_demuxer(ctx, state)
-  end
-
-  defp handle_fulfill_demand(ctx, state) do
-    handle_fulfill_demand(ctx, state, [])
-  end
-
-  defp handle_fulfill_demand(ctx, state, old_actions) do
-    {actions, state} =
-      ctx.pads
-      |> Enum.flat_map_reduce(state, fn
-        {ref = {Membrane.Pad, :output, stream_index}, pad}, state ->
-          {buffers, state} =
-            get_and_update_in(state, [:streams, stream_index], fn buffers ->
-              Enum.split(buffers, pad.demand)
-            end)
-
-          emit_eos? =
-            ctx.pads.input.end_of_stream? and length(get_in(state, [:streams, stream_index])) == 0
-
-          actions =
-            List.flatten([
-              [buffer: {ref, buffers}],
-              if(emit_eos?, do: [end_of_stream: ref], else: [])
-            ])
-
-          {actions, state}
-
-        _pad, state ->
-          {[], state}
-      end)
-
-    actions = old_actions ++ actions
+    {buffer_actions, state} = dispatch_buffers(ctx, state)
+    actions = actions ++ buffer_actions
 
     {actions, state}
+  end
+
+  defp dispatch_buffers(ctx, state) do
+    ctx
+    |> output_pads()
+    |> Enum.flat_map_reduce(state, fn pad, state ->
+      demand = get_in(ctx, [:pads, pad, :demand])
+
+      {buffers, state} =
+        get_and_update_in(state, [:streams, pad], fn buffers ->
+          Enum.split(buffers, demand)
+        end)
+
+      emit_eos? =
+        ctx.pads.input.end_of_stream? and length(get_in(state, [:streams, pad])) == 0
+
+      actions =
+        List.flatten([
+          [buffer: {pad, buffers}],
+          if(emit_eos?, do: [end_of_stream: pad], else: [])
+        ])
+
+      {actions, state}
+    end)
+  end
+
+  defp load_packets(ctx, state, packets) do
+    pads = output_pads(ctx)
+    streams = Enum.map(pads, fn {_, _, index} -> index end)
+
+    Enum.reduce(packets, state, fn packet, state ->
+      if packet.stream_index not in streams do
+        Membrane.Logger.warning(
+          "Dropping packet of untracked stream_index #{inspect(packet.stream_index)}"
+        )
+
+        state
+      else
+        buffer =
+          %Membrane.Buffer{
+            pts: packet.pts,
+            dts: packet.pts,
+            payload: packet.data
+          }
+
+        update_in(state, [:streams, {Membrane.Pad, :output, packet.stream_index}], fn acc ->
+          acc ++ [buffer]
+        end)
+      end
+    end)
+  end
+
+  defp read_packets(state, acc) do
+    case Demuxer.read_packet(state.ctx) do
+      :eof ->
+        {:eof, Enum.reverse(acc)}
+
+      {:error, other} ->
+        {:error, inspect(other)}
+
+      {:demand, demand} ->
+        {:demand, demand, Enum.reverse(acc)}
+
+      {:ok, packet} ->
+        read_packets(state, [packet | acc])
+    end
   end
 
   defp publish_streams(state) do
@@ -228,10 +193,10 @@ defmodule Membrane.LibAV.Demuxer.Filter do
     end
   end
 
-  defp tracked_stream_indexes(ctx) do
+  defp output_pads(ctx) do
     ctx.pads
     |> Enum.flat_map(fn
-      {{Membrane.Pad, :output, stream_index}, _} -> [stream_index]
+      {pad = {Membrane.Pad, :output, _stream_index}, _} -> [pad]
       _ -> []
     end)
   end

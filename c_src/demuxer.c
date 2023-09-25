@@ -12,6 +12,7 @@
 
 // Arbitrary choice.
 #define IO_BUF_SIZE 48000
+#define IO_BUF_MIN_DEMUX_SIZE 48000 * 4
 
 ErlNifResourceType *CTX_RES_TYPE;
 
@@ -83,6 +84,8 @@ void queue_deq(Ioq *q) {
   }
 }
 
+typedef enum { CTX_MODE_DRAIN, CTX_MODE_BUF } CTX_MODE;
+
 typedef struct {
   // Used to write binary data coming from membrane and as source for the
   // AVFormatContext.
@@ -92,6 +95,8 @@ typedef struct {
   AVIOContext *io_ctx;
   // The actual libAV demuxer.
   AVFormatContext *fmt_ctx;
+
+  CTX_MODE mode;
 
   int has_header;
 } Ctx;
@@ -163,6 +168,10 @@ int read_header(Ctx *ctx) {
 
   queue_deq(ctx->queue);
   ctx->queue->mode = QUEUE_MODE_SHIFT;
+  // Avoid having a buffer that cannot hold a compressed frame.
+  ctx->queue->size = ctx->queue->size < IO_BUF_MIN_DEMUX_SIZE
+                         ? IO_BUF_MIN_DEMUX_SIZE
+                         : ctx->queue->size;
 
   return errnum;
 
@@ -187,6 +196,7 @@ ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
 
   Ctx *ctx = (Ctx *)malloc(sizeof(Ctx));
   ctx->queue = queue;
+  ctx->mode = CTX_MODE_BUF;
   ctx->has_header = 0;
 
   // Make the resource take ownership on the context.
@@ -208,6 +218,12 @@ ERL_NIF_TERM add_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
 
   get_ctx(env, argv[0], &ctx);
   enif_inspect_binary(env, argv[1], &binary);
+
+  // Indicates EOS.
+  if (!binary.data) {
+    ctx->mode = CTX_MODE_DRAIN;
+    return enif_make_atom(env, "ok");
+  }
 
   // Copy the data in the buffer.
   queue_copy(ctx->queue, binary.data, binary.size);
@@ -232,28 +248,26 @@ ERL_NIF_TERM is_ready(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
 ERL_NIF_TERM read_packet(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   AVPacket *packet;
-  int errnum;
+  int errnum, freespace;
   char err[256];
 
   packet = av_packet_alloc();
   get_ctx(env, argv[0], &ctx);
 
+  freespace = queue_freespace(ctx->queue);
+
+  if (freespace > 0 && ctx->mode == CTX_MODE_BUF)
+    return enif_make_tuple2(env, enif_make_atom(env, "demand"),
+                            enif_make_long(env, freespace));
+
   if ((errnum = av_read_frame(ctx->fmt_ctx, packet)) < 0) {
     if (errnum == AVERROR_EOF)
-      return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                              enif_make_atom(env, "eof"));
+      return enif_make_atom(env, "eof");
 
     av_strerror(errnum, err, sizeof(err));
     return enif_make_tuple2(env, enif_make_atom(env, "error"),
                             enif_make_string(env, err, ERL_NIF_UTF8));
   }
-
-  ERL_NIF_TERM keys =
-      enif_make_list(env, 5, enif_make_string(env, "pts", ERL_NIF_UTF8),
-                     enif_make_string(env, "dts", ERL_NIF_UTF8),
-                     enif_make_string(env, "data", ERL_NIF_UTF8),
-                     enif_make_string(env, "duration", ERL_NIF_UTF8),
-                     enif_make_string(env, "stream_index", ERL_NIF_UTF8));
 
   ERL_NIF_TERM data;
   void *ptr = enif_make_new_binary(env, packet->size, &data);
