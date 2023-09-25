@@ -4,7 +4,7 @@ defmodule Support.Pipeline do
   def handle_init(_ctx, opts) do
     spec = [
       child(:source, %Membrane.File.Source{location: opts[:source_path]})
-      |> child(:demuxer, Membrane.LibAV.Demuxer)
+      |> child(:demuxer, Membrane.LibAV.Demuxer.Filter)
     ]
 
     {[spec: spec], %{decoder: opts[:decoder], output_path: opts[:output_path]}}

@@ -339,5 +339,4 @@ static ErlNifFunc nif_funcs[] = {
     {"read_packet", 1, read_packet},
 };
 
-ERL_NIF_INIT(Elixir.Membrane.LibAV.Demuxer.Nif, nif_funcs, load, NULL, NULL,
-             NULL)
+ERL_NIF_INIT(Elixir.Membrane.LibAV.Demuxer, nif_funcs, load, NULL, NULL, NULL)

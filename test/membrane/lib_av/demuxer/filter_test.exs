@@ -1,4 +1,4 @@
-defmodule Membrane.LibAV.DemuxerTest do
+defmodule Membrane.LibAV.Demuxer.FilterTest do
   use ExUnit.Case
   import Membrane.Testing.Assertions
   import Membrane.ChildrenSpec
@@ -15,7 +15,7 @@ defmodule Membrane.LibAV.DemuxerTest do
       test "detects #{codec_name} in #{path}" do
         spec = [
           child(:source, %Membrane.File.Source{location: unquote(path)})
-          |> child(:demuxer, Membrane.LibAV.Demuxer)
+          |> child(:demuxer, Membrane.LibAV.Demuxer.Filter)
         ]
 
         pid = Membrane.Testing.Pipeline.start_link_supervised!(spec: spec)
