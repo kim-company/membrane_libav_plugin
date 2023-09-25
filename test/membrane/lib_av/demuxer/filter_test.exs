@@ -12,7 +12,6 @@ defmodule Membrane.LibAV.Demuxer.FilterTest do
 
   describe "demuxer" do
     for {path, codec_name} <- @testfiles do
-      @tag skip: true
       test "detects #{codec_name} in #{path}" do
         spec = [
           child(:source, %Membrane.File.Source{location: unquote(path)})
