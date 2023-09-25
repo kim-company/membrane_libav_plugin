@@ -28,4 +28,8 @@ defmodule Membrane.LibAV do
   def demuxer_read_packet(_ctx) do
     raise "NIF demuxer_read_packet/1 not implemented"
   end
+
+  def decoder_alloc_context(_codec_id, _codec_params) do
+    raise "NIF decoder_alloc_context/2 not implemented"
+  end
 end

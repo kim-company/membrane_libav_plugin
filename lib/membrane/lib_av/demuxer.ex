@@ -1,4 +1,4 @@
-defmodule Membrane.LibAV.Demuxer.Filter do
+defmodule Membrane.LibAV.Demuxer do
   use Membrane.Filter
   alias Membrane.LibAV
 

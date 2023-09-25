@@ -1,4 +1,5 @@
 #include "erl_drv_nif.h"
+#include "libavcodec/codec.h"
 #include "libavcodec/codec_id.h"
 #include "libavcodec/codec_par.h"
 #include "libavcodec/packet.h"
@@ -14,8 +15,9 @@
 // Arbitrary choice.
 #define IO_BUF_SIZE 48000
 
-ErlNifResourceType *CTX_RES_TYPE;
+ErlNifResourceType *DEMUXER_CTX_RES_TYPE;
 ErlNifResourceType *CODEC_PARAMS_RES_TYPE;
+ErlNifResourceType *DECODER_CTX_RES_TYPE;
 
 typedef enum { QUEUE_MODE_SHIFT, QUEUE_MODE_GROW } QUEUE_MODE;
 
@@ -105,7 +107,7 @@ typedef struct {
   int has_header;
 } DemuxerContext;
 
-void free_ctx_res(ErlNifEnv *env, void *res) {
+void free_demuxer_context_res(ErlNifEnv *env, void *res) {
   DemuxerContext **ctx = (DemuxerContext **)res;
   free((*ctx)->queue->ptr);
   avio_context_free(&(*ctx)->io_ctx);
@@ -118,9 +120,17 @@ void free_codec_params_res(ErlNifEnv *env, void *res) {
   avcodec_parameters_free(params);
 }
 
-void demuxer_get_ctx(ErlNifEnv *env, ERL_NIF_TERM term, DemuxerContext **ctx) {
+void get_codec_params(ErlNifEnv *env, ERL_NIF_TERM term,
+                      AVCodecParameters **ctx) {
+  AVCodecParameters **params_res;
+  enif_get_resource(env, term, CODEC_PARAMS_RES_TYPE, (void *)&params_res);
+  *ctx = *params_res;
+}
+
+void get_demuxer_context(ErlNifEnv *env, ERL_NIF_TERM term,
+                         DemuxerContext **ctx) {
   DemuxerContext **ctx_res;
-  enif_get_resource(env, term, CTX_RES_TYPE, (void *)&ctx_res);
+  enif_get_resource(env, term, DEMUXER_CTX_RES_TYPE, (void *)&ctx_res);
   *ctx = *ctx_res;
 }
 
@@ -189,7 +199,7 @@ ERL_NIF_TERM demuxer_alloc_context(ErlNifEnv *env, int argc,
 
   // Make the resource take ownership on the context.
   DemuxerContext **ctx_res =
-      enif_alloc_resource(CTX_RES_TYPE, sizeof(DemuxerContext *));
+      enif_alloc_resource(DEMUXER_CTX_RES_TYPE, sizeof(DemuxerContext *));
   *ctx_res = ctx;
 
   ERL_NIF_TERM term = enif_make_resource(env, ctx_res);
@@ -206,7 +216,7 @@ ERL_NIF_TERM demuxer_add_data(ErlNifEnv *env, int argc,
   DemuxerContext *ctx;
   ErlNifBinary binary;
 
-  demuxer_get_ctx(env, argv[0], &ctx);
+  get_demuxer_context(env, argv[0], &ctx);
   enif_inspect_binary(env, argv[1], &binary);
 
   // Indicates EOS.
@@ -230,7 +240,7 @@ ERL_NIF_TERM demuxer_add_data(ErlNifEnv *env, int argc,
 ERL_NIF_TERM demuxer_is_ready(ErlNifEnv *env, int argc,
                               const ERL_NIF_TERM argv[]) {
   DemuxerContext *ctx;
-  demuxer_get_ctx(env, argv[0], &ctx);
+  get_demuxer_context(env, argv[0], &ctx);
 
   return ctx->has_header ? enif_make_atom(env, "true")
                          : enif_make_atom(env, "false");
@@ -244,7 +254,7 @@ ERL_NIF_TERM demuxer_read_packet(ErlNifEnv *env, int argc,
   char err[256];
 
   packet = av_packet_alloc();
-  demuxer_get_ctx(env, argv[0], &ctx);
+  get_demuxer_context(env, argv[0], &ctx);
 
   freespace = queue_freespace(ctx->queue);
 
@@ -294,7 +304,7 @@ ERL_NIF_TERM demuxer_streams(ErlNifEnv *env, int argc,
   int errnum;
   char err[256];
 
-  demuxer_get_ctx(env, argv[0], &ctx);
+  get_demuxer_context(env, argv[0], &ctx);
 
   // Called on EOS: we're not ready, meaning that we did not get
   // the amount of data we wanted, but we may still be able to
@@ -365,31 +375,91 @@ ERL_NIF_TERM demuxer_streams(ErlNifEnv *env, int argc,
 ERL_NIF_TERM demuxer_demand(ErlNifEnv *env, int argc,
                             const ERL_NIF_TERM argv[]) {
   DemuxerContext *ctx;
-  demuxer_get_ctx(env, argv[0], &ctx);
+  get_demuxer_context(env, argv[0], &ctx);
 
   return enif_make_int(env, ctx->queue->size - ctx->queue->buf_end);
 }
 
+typedef struct {
+  AVCodecContext *codec_ctx;
+} DecoderContext;
+
+void free_decoder_context_res(ErlNifEnv *env, void *res) {
+  DecoderContext **ctx = (DecoderContext **)res;
+  avcodec_free_context(&(*ctx)->codec_ctx);
+  free(*ctx);
+}
+
+void get_decoder_context(ErlNifEnv *env, ERL_NIF_TERM term,
+                         DecoderContext **ctx) {
+  DecoderContext **ctx_res;
+  enif_get_resource(env, term, DECODER_CTX_RES_TYPE, (void *)&ctx_res);
+  *ctx = *ctx_res;
+}
+
+ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
+                                   const ERL_NIF_TERM argv[]) {
+  int codec_id;
+  AVCodecParameters *params;
+  const AVCodec *codec;
+  AVCodecContext *codec_ctx;
+  DecoderContext *ctx;
+
+  enif_get_int(env, argv[0], &codec_id);
+  get_codec_params(env, argv[1], &params);
+
+  codec = avcodec_find_decoder((enum AVCodecID)codec_id);
+  codec_ctx = avcodec_alloc_context3(codec); // avcodec_free_context()
+
+  avcodec_parameters_to_context(codec_ctx, params);
+  avcodec_open2(codec_ctx, codec, NULL);
+
+  ctx = (DecoderContext *)malloc(sizeof(DecoderContext));
+  ctx->codec_ctx = codec_ctx;
+
+  // Make the resource take ownership on the context.
+  DecoderContext **ctx_res =
+      enif_alloc_resource(DECODER_CTX_RES_TYPE, sizeof(DecoderContext *));
+  *ctx_res = ctx;
+
+  ERL_NIF_TERM term = enif_make_resource(env, ctx_res);
+
+  // This is done to allow the erlang garbage collector to take care
+  // of freeing this resource when needed.
+  enif_release_resource(ctx_res);
+
+  return term;
+}
+
+// ERL_NIF_TERM decoder_decode(ErlNifEnv *env, int argc,
+//                             const ERL_NIF_TERM argv[]) {
+// }
+
 // Called when the nif is loaded, as specified in the ERL_NIF_INIT call.
 int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
   int flags = ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER;
-  CTX_RES_TYPE =
-      enif_open_resource_type(env, NULL, "ctx", free_ctx_res, flags, NULL);
+  DEMUXER_CTX_RES_TYPE = enif_open_resource_type(
+      env, NULL, "demuxer_ctx", free_demuxer_context_res, flags, NULL);
 
   CODEC_PARAMS_RES_TYPE = enif_open_resource_type(
       env, NULL, "codec_params", free_codec_params_res, flags, NULL);
+
+  DECODER_CTX_RES_TYPE = enif_open_resource_type(
+      env, NULL, "decoder_ctx", free_decoder_context_res, flags, NULL);
 
   return 0;
 }
 
 static ErlNifFunc nif_funcs[] = {
     // {erl_function_name, erl_function_arity, c_function}
+    // Demuxer
     {"demuxer_alloc_context", 0, demuxer_alloc_context},
     {"demuxer_add_data", 2, demuxer_add_data},
     {"demuxer_is_ready", 1, demuxer_is_ready},
     {"demuxer_demand", 1, demuxer_demand},
     {"demuxer_streams", 1, demuxer_streams},
     {"demuxer_read_packet", 1, demuxer_read_packet},
-};
+    // Decoder
+    {"decoder_alloc_context", 2, decoder_alloc_context}};
 
 ERL_NIF_INIT(Elixir.Membrane.LibAV, nif_funcs, load, NULL, NULL, NULL)
