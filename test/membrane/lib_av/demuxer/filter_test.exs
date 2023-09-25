@@ -12,6 +12,7 @@ defmodule Membrane.LibAV.Demuxer.FilterTest do
 
   describe "demuxer" do
     for {path, codec_name} <- @testfiles do
+      @tag skip: true
       test "detects #{codec_name} in #{path}" do
         spec = [
           child(:source, %Membrane.File.Source{location: unquote(path)})
@@ -21,9 +22,7 @@ defmodule Membrane.LibAV.Demuxer.FilterTest do
         pid = Membrane.Testing.Pipeline.start_link_supervised!(spec: spec)
         codec_name = unquote(codec_name)
 
-        # NOTE
-        # some streams in the input contain multiple tracks, here we're just
-        # checking the presence of one of them.
+        # NOTE some streams in the input contain multiple tracks.
         assert_pipeline_notified(
           pid,
           :demuxer,

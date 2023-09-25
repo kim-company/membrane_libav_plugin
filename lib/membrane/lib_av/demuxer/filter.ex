@@ -1,6 +1,6 @@
 defmodule Membrane.LibAV.Demuxer.Filter do
   use Membrane.Filter
-  alias Membrane.LibAV.Demuxer
+  alias Membrane.LibAV
 
   require Membrane.Logger
 
@@ -21,7 +21,8 @@ defmodule Membrane.LibAV.Demuxer.Filter do
   def handle_init(_ctx, _opts) do
     {[],
      %{
-       ctx: Demuxer.alloc_context(),
+       ctx: LibAV.demuxer_alloc_context(),
+       ctx_eof: false,
        format_detected?: false,
        available_streams: [],
        streams: %{}
@@ -32,20 +33,20 @@ defmodule Membrane.LibAV.Demuxer.Filter do
   def handle_playing(_ctx, state) do
     # Start by asking some buffers, which are going to be used
     # to discover the available streams.
-    {[demand: {:input, Demuxer.demand(state.ctx)}], state}
+    {[demand: {:input, LibAV.demuxer_demand(state.ctx)}], state}
   end
 
   @impl true
   def handle_end_of_stream(:input, _ctx, state = %{format_detected?: false}) do
     # We cannot wait for the demuxer to become ready, we need to
     # try with what we've collected.
-    :ok = Demuxer.add_data(state.ctx, nil)
+    :ok = LibAV.demuxer_add_data(state.ctx, nil)
     publish_streams(state)
   end
 
   def handle_end_of_stream(:input, ctx, state) do
     # EOS is controlled by the internal demuxer.
-    :ok = Demuxer.add_data(state.ctx, nil)
+    :ok = LibAV.demuxer_add_data(state.ctx, nil)
     demux_buffers(ctx, state)
   end
 
@@ -78,17 +79,17 @@ defmodule Membrane.LibAV.Demuxer.Filter do
 
   @impl true
   def handle_buffer(:input, buffer, _ctx, state = %{format_detected?: false}) do
-    :ok = Demuxer.add_data(state.ctx, buffer.payload)
+    :ok = LibAV.demuxer_add_data(state.ctx, buffer.payload)
 
-    if Demuxer.is_ready(state.ctx) do
+    if LibAV.demuxer_is_ready(state.ctx) do
       publish_streams(state)
     else
-      {[demand: {:input, Demuxer.demand(state.ctx)}], state}
+      {[demand: {:input, LibAV.demuxer_demand(state.ctx)}], state}
     end
   end
 
   def handle_buffer(:input, buffer, ctx, state) do
-    :ok = Demuxer.add_data(state.ctx, buffer.payload)
+    :ok = LibAV.demuxer_add_data(state.ctx, buffer.payload)
     demux_buffers(ctx, state)
   end
 
@@ -162,7 +163,7 @@ defmodule Membrane.LibAV.Demuxer.Filter do
   end
 
   defp read_packets(state, acc) do
-    case Demuxer.read_packet(state.ctx) do
+    case LibAV.demuxer_read_packet(state.ctx) do
       :eof ->
         {:eof, Enum.reverse(acc)}
 
@@ -178,12 +179,16 @@ defmodule Membrane.LibAV.Demuxer.Filter do
   end
 
   defp publish_streams(state) do
-    case Demuxer.streams(state.ctx) do
+    case LibAV.demuxer_streams(state.ctx) do
       {:ok, streams} ->
+        streams =
+          Enum.map(streams, fn stream ->
+            %{stream | codec_name: to_string(stream.codec_name)}
+          end)
+
         actions =
-          Enum.map(streams, fn {codec, stream_index} ->
-            {:notify_parent,
-             {:new_stream, %{codec_name: to_string(codec), stream_index: stream_index}}}
+          Enum.map(streams, fn stream ->
+            {:notify_parent, {:new_stream, stream}}
           end)
 
         {actions, %{state | format_detected?: true, available_streams: streams}}

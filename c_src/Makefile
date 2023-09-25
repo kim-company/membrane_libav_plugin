@@ -8,14 +8,14 @@ ERTS_INCLUDE_DIR := $(shell rtx where erlang)/erts-14.0.2/include
 endif
 
 CC = clang
-CFLAGS = -fPIC -g3 -fno-omit-frame-pointer $(shell pkg-config --cflags libavcodec libavformat libavutil) -I$(ERTS_INCLUDE_DIR)
+CFLAGS = -fPIC -g3 -fno-omit-frame-pointer $(shell pkg-config --cflags libavcodec libavformat libavutil) -I$(ERTS_INCLUDE_DIR) -I.
 LDFLAGS = -dynamiclib -undefined dynamic_lookup $(shell pkg-config --libs libavcodec libavformat libavutil)
 
-OUTPUT = demuxer.so
+OUTPUT = nifav.so
 
 all: $(OUTPUT)
 
-demuxer.so: demuxer.c
+nifav.so: nifav.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LIBS)
 
 clean:
