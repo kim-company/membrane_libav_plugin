@@ -185,8 +185,8 @@ open_error:
   return errnum;
 }
 
-ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
-                           const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM demuxer_alloc_context(ErlNifEnv *env, int argc,
+                                   const ERL_NIF_TERM argv[]) {
   Ioq *queue = (Ioq *)malloc(sizeof(Ioq));
   queue->ptr = malloc(IO_BUF_SIZE);
   queue->mode = QUEUE_MODE_GROW;
@@ -212,7 +212,8 @@ ERL_NIF_TERM alloc_context(ErlNifEnv *env, int argc,
   return term;
 }
 
-ERL_NIF_TERM add_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM demuxer_add_data(ErlNifEnv *env, int argc,
+                              const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   ErlNifBinary binary;
 
@@ -237,7 +238,8 @@ ERL_NIF_TERM add_data(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   return enif_make_atom(env, "ok");
 }
 
-ERL_NIF_TERM is_ready(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM demuxer_is_ready(ErlNifEnv *env, int argc,
+                              const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   get_ctx(env, argv[0], &ctx);
 
@@ -245,7 +247,8 @@ ERL_NIF_TERM is_ready(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
                          : enif_make_atom(env, "false");
 }
 
-ERL_NIF_TERM read_packet(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM demuxer_read_packet(ErlNifEnv *env, int argc,
+                                 const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   AVPacket *packet;
   int errnum, freespace;
@@ -295,7 +298,8 @@ ERL_NIF_TERM read_packet(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   return enif_make_tuple2(env, enif_make_atom(env, "ok"), map);
 }
 
-ERL_NIF_TERM streams(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM demuxer_streams(ErlNifEnv *env, int argc,
+                             const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   ERL_NIF_TERM *codecs;
   int errnum;
@@ -336,7 +340,8 @@ ERL_NIF_TERM streams(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
       enif_make_list_from_array(env, codecs, ctx->fmt_ctx->nb_streams));
 }
 
-ERL_NIF_TERM demand(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM demuxer_demand(ErlNifEnv *env, int argc,
+                            const ERL_NIF_TERM argv[]) {
   Ctx *ctx;
   get_ctx(env, argv[0], &ctx);
 
@@ -345,12 +350,12 @@ ERL_NIF_TERM demand(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
 
 static ErlNifFunc nif_funcs[] = {
     // {erl_function_name, erl_function_arity, c_function}
-    {"alloc_context", 0, alloc_context},
-    {"add_data", 2, add_data},
-    {"is_ready", 1, is_ready},
-    {"demand", 1, demand},
-    {"streams", 1, streams},
-    {"read_packet", 1, read_packet},
+    {"alloc_context", 0, demuxer_alloc_context},
+    {"add_data", 2, demuxer_add_data},
+    {"is_ready", 1, demuxer_is_ready},
+    {"demand", 1, demuxer_demand},
+    {"streams", 1, demuxer_streams},
+    {"read_packet", 1, demuxer_read_packet},
 };
 
 ERL_NIF_INIT(Elixir.Membrane.LibAV.Demuxer, nif_funcs, load, NULL, NULL, NULL)
