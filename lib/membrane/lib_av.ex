@@ -2,7 +2,7 @@ defmodule Membrane.LibAV do
   @on_load :load_nifs
 
   def load_nifs do
-    :erlang.load_nif(~c"./c_src/nifav", 0)
+    :erlang.load_nif(~c"./c_src/libav", 0)
   end
 
   def demuxer_alloc_context() do

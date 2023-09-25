@@ -11,11 +11,11 @@ CC = clang
 CFLAGS = -fPIC -g3 -fno-omit-frame-pointer $(shell pkg-config --cflags libavcodec libavformat libavutil) -I$(ERTS_INCLUDE_DIR) -I.
 LDFLAGS = -dynamiclib -undefined dynamic_lookup $(shell pkg-config --libs libavcodec libavformat libavutil)
 
-OUTPUT = nifav.so
+OUTPUT = libav.so
 
 all: $(OUTPUT)
 
-nifav.so: nifav.c
+libav.so: libav.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LIBS)
 
 clean:

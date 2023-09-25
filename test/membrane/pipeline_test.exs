@@ -1,4 +1,4 @@
-defmodule Membrane.LibAVTest do
+defmodule Membrane.LibAV.PipelineTest do
   use ExUnit.Case
   import Membrane.Testing.Assertions
   import Membrane.ChildrenSpec
