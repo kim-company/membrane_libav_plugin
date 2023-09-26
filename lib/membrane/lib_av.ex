@@ -32,4 +32,8 @@ defmodule Membrane.LibAV do
   def decoder_alloc_context(_codec_id, _codec_params) do
     raise "NIF decoder_alloc_context/2 not implemented"
   end
+
+  def decoder_add_data(_ctx, _packet) do
+    raise "NIF decoder_add_data/2 not implemented"
+  end
 end

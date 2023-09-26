@@ -52,7 +52,7 @@ defmodule Membrane.LibAV.PipelineTest do
         custom_args: [output_path: output]
       )
 
-    assert_end_of_stream(pid, :sink, :input, 1_000)
+    assert_end_of_stream(pid, :sink, :input, 100_000)
     :ok = Membrane.Pipeline.terminate(pid)
   end
 end

@@ -3,12 +3,14 @@
 #include "libavcodec/codec_id.h"
 #include "libavcodec/codec_par.h"
 #include "libavcodec/packet.h"
+#include "libavutil/frame.h"
 #include <erl_nif.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
 #include <libavutil/error.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
 
@@ -228,8 +230,6 @@ ERL_NIF_TERM demuxer_add_data(ErlNifEnv *env, int argc,
   // Copy the data in the buffer.
   queue_copy(ctx->queue, binary.data, binary.size);
 
-  // TODO: release the binary? Do we have to?
-
   // Make an attemp reading the header only when the ioq buffer is filled.
   if (!ctx->has_header && queue_is_filled(ctx->queue))
     demuxer_read_header(ctx);
@@ -244,6 +244,31 @@ ERL_NIF_TERM demuxer_is_ready(ErlNifEnv *env, int argc,
 
   return ctx->has_header ? enif_make_atom(env, "true")
                          : enif_make_atom(env, "false");
+}
+
+ERL_NIF_TERM make_packet_map(ErlNifEnv *env, AVPacket *packet) {
+  ERL_NIF_TERM data;
+  void *ptr = enif_make_new_binary(env, packet->size, &data);
+  memcpy(ptr, packet->data, packet->size);
+
+  ERL_NIF_TERM map;
+  map = enif_make_new_map(env);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "stream_index"),
+                    enif_make_long(env, packet->stream_index), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "pts"),
+                    enif_make_long(env, packet->pts), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "dts"),
+                    enif_make_long(env, packet->dts), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "duration"),
+                    enif_make_long(env, packet->duration), &map);
+
+  enif_make_map_put(env, map, enif_make_atom(env, "data"), data, &map);
+
+  return map;
 }
 
 ERL_NIF_TERM demuxer_read_packet(ErlNifEnv *env, int argc,
@@ -271,27 +296,8 @@ ERL_NIF_TERM demuxer_read_packet(ErlNifEnv *env, int argc,
                             enif_make_string(env, err, ERL_NIF_UTF8));
   }
 
-  ERL_NIF_TERM data;
-  void *ptr = enif_make_new_binary(env, packet->size, &data);
-  memcpy(ptr, packet->data, packet->size);
-
   ERL_NIF_TERM map;
-  map = enif_make_new_map(env);
-
-  enif_make_map_put(env, map, enif_make_atom(env, "stream_index"),
-                    enif_make_long(env, packet->stream_index), &map);
-
-  enif_make_map_put(env, map, enif_make_atom(env, "pts"),
-                    enif_make_long(env, packet->pts), &map);
-
-  enif_make_map_put(env, map, enif_make_atom(env, "dts"),
-                    enif_make_long(env, packet->dts), &map);
-
-  enif_make_map_put(env, map, enif_make_atom(env, "duration"),
-                    enif_make_long(env, packet->duration), &map);
-
-  enif_make_map_put(env, map, enif_make_atom(env, "data"), data, &map);
-
+  map = make_packet_map(env, packet);
   av_packet_unref(packet);
 
   return enif_make_tuple2(env, enif_make_atom(env, "ok"), map);
@@ -409,7 +415,7 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
   get_codec_params(env, argv[1], &params);
 
   codec = avcodec_find_decoder((enum AVCodecID)codec_id);
-  codec_ctx = avcodec_alloc_context3(codec); // avcodec_free_context()
+  codec_ctx = avcodec_alloc_context3(codec);
 
   avcodec_parameters_to_context(codec_ctx, params);
   avcodec_open2(codec_ctx, codec, NULL);
@@ -431,9 +437,113 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
   return term;
 }
 
-// ERL_NIF_TERM decoder_decode(ErlNifEnv *env, int argc,
-//                             const ERL_NIF_TERM argv[]) {
+// ERL_NIF_TERM make_frame_map(ErlNifEnv *env, AVFrame *frame) {
+//   ERL_NIF_TERM data;
+//   void *ptr = enif_make_new_binary(env, frame->buf->size, &data);
+//   memcpy(ptr, packet->data, packet->size);
+
+//   ERL_NIF_TERM map;
+//   map = enif_make_new_map(env);
+
+//   enif_make_map_put(env, map, enif_make_atom(env, "stream_index"),
+//                     enif_make_long(env, packet->stream_index), &map);
+
+//   enif_make_map_put(env, map, enif_make_atom(env, "pts"),
+//                     enif_make_long(env, packet->pts), &map);
+
+//   enif_make_map_put(env, map, enif_make_atom(env, "dts"),
+//                     enif_make_long(env, packet->dts), &map);
+
+//   enif_make_map_put(env, map, enif_make_atom(env, "duration"),
+//                     enif_make_long(env, packet->duration), &map);
+
+//   enif_make_map_put(env, map, enif_make_atom(env, "data"), data, &map);
+
+//   return map;
 // }
+
+ERL_NIF_TERM decoder_add_data(ErlNifEnv *env, int argc,
+                              const ERL_NIF_TERM argv[]) {
+  DecoderContext *ctx;
+  AVPacket *ipacket, *packet;
+  AVFrame *frame;
+  ErlNifBinary binary;
+  ERL_NIF_TERM map_value;
+  ERL_NIF_TERM list;
+  char err[256];
+  int ret;
+
+  get_decoder_context(env, argv[0], &ctx);
+
+  // decode the fields of the input map.
+  if ((ret = enif_get_map_value(env, argv[1], enif_make_atom(env, "data"),
+                                &map_value))) {
+    ipacket = av_packet_alloc();
+    enif_inspect_binary(env, map_value, &binary);
+    ipacket->data = binary.data;
+    ipacket->size = binary.size;
+
+    enif_get_map_value(env, argv[1], enif_make_atom(env, "pts"), &map_value);
+    enif_get_int64(env, map_value, (long *)&ipacket->pts);
+
+    enif_get_map_value(env, argv[1], enif_make_atom(env, "dts"), &map_value);
+    enif_get_int64(env, map_value, (long *)&ipacket->dts);
+
+    packet = av_packet_alloc();
+    av_packet_ref(packet, ipacket);
+    av_packet_free(&ipacket);
+
+    avcodec_send_packet(ctx->codec_ctx, packet);
+    av_packet_unref(packet);
+  } else {
+    // This is a "drain" packet, i.e. NULL.
+    avcodec_send_packet(ctx->codec_ctx, NULL);
+  };
+
+  list = enif_make_list(env, 0);
+  frame = av_frame_alloc();
+  while ((ret = avcodec_receive_frame(ctx->codec_ctx, frame)) == 0) {
+    AVBufferRef *ref;
+    for (int i = 0; i < AV_NUM_DATA_POINTERS; i++) {
+      if (!(ref = frame->buf[i]))
+        break;
+
+      ERL_NIF_TERM data;
+      ERL_NIF_TERM map;
+
+      void *ptr = enif_make_new_binary(env, ref->size, &data);
+      memcpy(ptr, ref->data, ref->size);
+
+      // Create a frame map with the data contained in each
+      // buffer reference.
+      map = enif_make_new_map(env);
+      // TODO
+      // each frame map created here will have the same pts value.
+      // To solve, we might divide frame->duration with the number of
+      // buffers found duration this process.
+      enif_make_map_put(env, map, enif_make_atom(env, "pts"),
+                        enif_make_long(env, frame->pts), &map);
+      enif_make_map_put(env, map, enif_make_atom(env, "data"), data, &map);
+
+      list = enif_make_list_cell(env, map, list);
+    }
+    // Reset the frame to reuse it for the next decode round.
+    av_frame_unref(frame);
+  }
+
+  switch (ret) {
+  case 0:
+    return enif_make_tuple2(env, enif_make_atom(env, "ok"), list);
+  case AVERROR(EAGAIN):
+    return enif_make_tuple2(env, enif_make_atom(env, "ok"), list);
+  case AVERROR_EOF:
+    return enif_make_tuple2(env, enif_make_atom(env, "eof"), list);
+  default:
+    av_strerror(ret, err, sizeof(err));
+    return enif_make_tuple2(env, enif_make_atom(env, "error"),
+                            enif_make_string(env, err, ERL_NIF_UTF8));
+  }
+}
 
 // Called when the nif is loaded, as specified in the ERL_NIF_INIT call.
 int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
@@ -460,6 +570,7 @@ static ErlNifFunc nif_funcs[] = {
     {"demuxer_streams", 1, demuxer_streams},
     {"demuxer_read_packet", 1, demuxer_read_packet},
     // Decoder
-    {"decoder_alloc_context", 2, decoder_alloc_context}};
+    {"decoder_alloc_context", 2, decoder_alloc_context},
+    {"decoder_add_data", 2, decoder_add_data}};
 
 ERL_NIF_INIT(Elixir.Membrane.LibAV, nif_funcs, load, NULL, NULL, NULL)
