@@ -10,7 +10,8 @@ To run the tests under the debugger, `lldb -- $ERLEXEC $CMD_ARGS test`.
 
 ## Status
 The demuxer recognizes any stream, the decoder decodes to raw data. I tested
-only audio streams (aac, opus). Error handling is incomplete.
+only audio streams (aac, opus). Error handling is incomplete, not to mention
+memory checks, it is probably leaking everywhere right now!
 
 ## Resources
 - https://cocoa-research.works/2022/02/debug-erlang-nif-library/
