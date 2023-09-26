@@ -4,6 +4,8 @@
 #include "libavcodec/codec_par.h"
 #include "libavcodec/packet.h"
 #include "libavutil/frame.h"
+#include "libavutil/samplefmt.h"
+#include "libswresample/swresample.h"
 #include <erl_nif.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -403,11 +405,15 @@ ERL_NIF_TERM demuxer_demand(ErlNifEnv *env, int argc,
 
 typedef struct {
   AVCodecContext *codec_ctx;
+  SwrContext *resampler_ctx;
 } DecoderContext;
 
 void free_decoder_context_res(ErlNifEnv *env, void *res) {
   DecoderContext **ctx = (DecoderContext **)res;
   avcodec_free_context(&(*ctx)->codec_ctx);
+  if ((*ctx)->resampler_ctx)
+    swr_free(&(*ctx)->resampler_ctx);
+
   free(*ctx);
 }
 
@@ -416,6 +422,29 @@ void get_decoder_context(ErlNifEnv *env, ERL_NIF_TERM term,
   DecoderContext **ctx_res;
   enif_get_resource(env, term, DECODER_CTX_RES_TYPE, (void *)&ctx_res);
   *ctx = *ctx_res;
+}
+
+int is_planar(enum AVSampleFormat fmt) {
+  switch (fmt) {
+  case AV_SAMPLE_FMT_U8P:
+  case AV_SAMPLE_FMT_S16P:
+  case AV_SAMPLE_FMT_S32P:
+  case AV_SAMPLE_FMT_FLTP:
+  case AV_SAMPLE_FMT_DBLP:
+  case AV_SAMPLE_FMT_S64P:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+int alloc_resampler(AVCodecContext *codec_ctx, SwrContext **resample_ctx) {
+  swr_alloc_set_opts2(resample_ctx, &codec_ctx->ch_layout,
+                      av_get_packed_sample_fmt(codec_ctx->sample_fmt),
+                      codec_ctx->sample_rate, &codec_ctx->ch_layout,
+                      codec_ctx->sample_fmt, codec_ctx->sample_rate, 0, NULL);
+
+  return swr_init(*resample_ctx);
 }
 
 ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
@@ -438,6 +467,10 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
   ctx = (DecoderContext *)malloc(sizeof(DecoderContext));
   ctx->codec_ctx = codec_ctx;
 
+  if (is_planar(codec_ctx->sample_fmt)) {
+    alloc_resampler(codec_ctx, &ctx->resampler_ctx);
+  }
+
   // Make the resource take ownership on the context.
   DecoderContext **ctx_res =
       enif_alloc_resource(DECODER_CTX_RES_TYPE, sizeof(DecoderContext *));
@@ -452,8 +485,8 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
   return term;
 }
 
-ERL_NIF_TERM make_sample_format(ErlNifEnv *env, AVCodecContext *ctx) {
-  switch (ctx->sample_fmt) {
+ERL_NIF_TERM sample_format_to_tuple(ErlNifEnv *env, enum AVSampleFormat fmt) {
+  switch (fmt) {
   case AV_SAMPLE_FMT_U8: ///< unsigned 8 bits
     return enif_make_tuple2(env, enif_make_atom(env, "u"),
                             enif_make_int(env, 8));
@@ -497,15 +530,24 @@ ERL_NIF_TERM make_sample_format(ErlNifEnv *env, AVCodecContext *ctx) {
   }
 }
 
+enum AVSampleFormat output_sample_format(DecoderContext *ctx) {
+  if (ctx->resampler_ctx)
+    return av_get_packed_sample_fmt(ctx->codec_ctx->sample_fmt);
+  return ctx->codec_ctx->sample_fmt;
+}
+
 ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
                                    const ERL_NIF_TERM argv[]) {
   DecoderContext *ctx;
+  enum AVSampleFormat fmt;
   ERL_NIF_TERM map;
   get_decoder_context(env, argv[0], &ctx);
 
   // TODO
   // this function is only meaningful when the stream is of audio type. We
   // need to support also video.
+
+  fmt = output_sample_format(ctx);
 
   map = enif_make_new_map(env);
   enif_make_map_put(env, map, enif_make_atom(env, "channels"),
@@ -514,7 +556,7 @@ ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
   enif_make_map_put(env, map, enif_make_atom(env, "sample_rate"),
                     enif_make_int(env, ctx->codec_ctx->sample_rate), &map);
   enif_make_map_put(env, map, enif_make_atom(env, "sample_format"),
-                    make_sample_format(env, ctx->codec_ctx), &map);
+                    sample_format_to_tuple(env, fmt), &map);
 
   return map;
 }
@@ -560,6 +602,18 @@ ERL_NIF_TERM decoder_add_data(ErlNifEnv *env, int argc,
   list = enif_make_list(env, 0);
   frame = av_frame_alloc();
   while ((ret = avcodec_receive_frame(ctx->codec_ctx, frame)) == 0) {
+    if (ctx->resampler_ctx) {
+      AVFrame *resampled_frame;
+      resampled_frame = av_frame_alloc();
+      resampled_frame->ch_layout = frame->ch_layout;
+      resampled_frame->sample_rate = frame->sample_rate;
+      resampled_frame->format = av_get_packed_sample_fmt(frame->format);
+
+      swr_convert_frame(ctx->resampler_ctx, resampled_frame, frame);
+      av_frame_unref(frame);
+      frame = resampled_frame;
+    }
+
     AVBufferRef *ref;
     for (int i = 0; i < AV_NUM_DATA_POINTERS; i++) {
       if (!(ref = frame->buf[i]))

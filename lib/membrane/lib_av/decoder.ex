@@ -38,7 +38,11 @@ defmodule Membrane.LibAV.Decoder do
   @impl true
   def handle_stream_format(:input, _format, _ctx, state) do
     stream_format = LibAV.decoder_stream_format(state.ctx)
-    {[stream_format: {:output, to_raw_audio_format(stream_format)}], state}
+
+    {[
+       stream_format:
+         {:output, %Membrane.RemoteStream{content_format: to_raw_audio_format(stream_format)}}
+     ], state}
   end
 
   @impl true
@@ -83,6 +87,13 @@ defmodule Membrane.LibAV.Decoder do
     end
   end
 
+  defp endianness() do
+    case System.endianness() do
+      :little -> :le
+      :big -> :be
+    end
+  end
+
   defp to_raw_audio_format(stream_format) do
     {sample_type, sample_size} = stream_format.sample_format
 
@@ -90,7 +101,7 @@ defmodule Membrane.LibAV.Decoder do
       sample_rate: stream_format.sample_rate,
       channels: stream_format.channels,
       sample_format:
-        Membrane.RawAudio.SampleFormat.from_tuple({sample_type, sample_size, System.endianness()})
+        Membrane.RawAudio.SampleFormat.from_tuple({sample_type, sample_size, endianness()})
     }
   end
 end
