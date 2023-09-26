@@ -437,31 +437,6 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
   return term;
 }
 
-// ERL_NIF_TERM make_frame_map(ErlNifEnv *env, AVFrame *frame) {
-//   ERL_NIF_TERM data;
-//   void *ptr = enif_make_new_binary(env, frame->buf->size, &data);
-//   memcpy(ptr, packet->data, packet->size);
-
-//   ERL_NIF_TERM map;
-//   map = enif_make_new_map(env);
-
-//   enif_make_map_put(env, map, enif_make_atom(env, "stream_index"),
-//                     enif_make_long(env, packet->stream_index), &map);
-
-//   enif_make_map_put(env, map, enif_make_atom(env, "pts"),
-//                     enif_make_long(env, packet->pts), &map);
-
-//   enif_make_map_put(env, map, enif_make_atom(env, "dts"),
-//                     enif_make_long(env, packet->dts), &map);
-
-//   enif_make_map_put(env, map, enif_make_atom(env, "duration"),
-//                     enif_make_long(env, packet->duration), &map);
-
-//   enif_make_map_put(env, map, enif_make_atom(env, "data"), data, &map);
-
-//   return map;
-// }
-
 ERL_NIF_TERM decoder_add_data(ErlNifEnv *env, int argc,
                               const ERL_NIF_TERM argv[]) {
   DecoderContext *ctx;
