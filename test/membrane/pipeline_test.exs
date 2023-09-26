@@ -32,6 +32,14 @@ defmodule Membrane.LibAV.PipelineTest do
         |> child(:decoder, %Membrane.LibAV.Decoder{
           stream: stream
         })
+        |> child(:converter, %Membrane.FFmpeg.SWResample.Converter{
+          output_stream_format: %Membrane.RawAudio{
+            channels: 1,
+            sample_format: :s16le,
+            sample_rate: 48_000
+          }
+        })
+        |> child(:encoder, Membrane.AAC.FDK.Encoder)
         |> child(:sink, %Membrane.File.Sink{location: state.output_path})
 
       {[spec: spec], %{state | has_stream: true}}
@@ -44,7 +52,7 @@ defmodule Membrane.LibAV.PipelineTest do
 
   @tag :tmp_dir
   test "all©", %{tmp_dir: dir} do
-    output = Path.join([dir, "output"])
+    output = Path.join([dir, "output.aac"])
 
     pid =
       Membrane.Testing.Pipeline.start_link_supervised!(

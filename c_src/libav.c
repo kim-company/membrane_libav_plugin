@@ -406,6 +406,7 @@ ERL_NIF_TERM demuxer_demand(ErlNifEnv *env, int argc,
 typedef struct {
   AVCodecContext *codec_ctx;
   SwrContext *resampler_ctx;
+  enum AVSampleFormat output_sample_format;
 } DecoderContext;
 
 void free_decoder_context_res(ErlNifEnv *env, void *res) {
@@ -438,13 +439,20 @@ int is_planar(enum AVSampleFormat fmt) {
   }
 }
 
-int alloc_resampler(AVCodecContext *codec_ctx, SwrContext **resample_ctx) {
-  swr_alloc_set_opts2(resample_ctx, &codec_ctx->ch_layout,
-                      av_get_packed_sample_fmt(codec_ctx->sample_fmt),
+int alloc_resampler(DecoderContext *ctx) {
+  int ret;
+  AVCodecContext *codec_ctx;
+  enum AVSampleFormat output_fmt;
+
+  codec_ctx = ctx->codec_ctx;
+  output_fmt = av_get_packed_sample_fmt(codec_ctx->sample_fmt);
+
+  swr_alloc_set_opts2(&(ctx->resampler_ctx), &codec_ctx->ch_layout, output_fmt,
                       codec_ctx->sample_rate, &codec_ctx->ch_layout,
                       codec_ctx->sample_fmt, codec_ctx->sample_rate, 0, NULL);
 
-  return swr_init(*resample_ctx);
+  ctx->output_sample_format = output_fmt;
+  return swr_init(ctx->resampler_ctx);
 }
 
 ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
@@ -466,10 +474,10 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
 
   ctx = (DecoderContext *)malloc(sizeof(DecoderContext));
   ctx->codec_ctx = codec_ctx;
+  ctx->output_sample_format = codec_ctx->sample_fmt;
 
-  if (is_planar(codec_ctx->sample_fmt)) {
-    alloc_resampler(codec_ctx, &ctx->resampler_ctx);
-  }
+  if (is_planar(codec_ctx->sample_fmt))
+    alloc_resampler(ctx);
 
   // Make the resource take ownership on the context.
   DecoderContext **ctx_res =
@@ -530,12 +538,6 @@ ERL_NIF_TERM sample_format_to_tuple(ErlNifEnv *env, enum AVSampleFormat fmt) {
   }
 }
 
-enum AVSampleFormat output_sample_format(DecoderContext *ctx) {
-  if (ctx->resampler_ctx)
-    return av_get_packed_sample_fmt(ctx->codec_ctx->sample_fmt);
-  return ctx->codec_ctx->sample_fmt;
-}
-
 ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
                                    const ERL_NIF_TERM argv[]) {
   DecoderContext *ctx;
@@ -547,8 +549,6 @@ ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
   // this function is only meaningful when the stream is of audio type. We
   // need to support also video.
 
-  fmt = output_sample_format(ctx);
-
   map = enif_make_new_map(env);
   enif_make_map_put(env, map, enif_make_atom(env, "channels"),
                     enif_make_int(env, ctx->codec_ctx->ch_layout.nb_channels),
@@ -556,7 +556,8 @@ ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
   enif_make_map_put(env, map, enif_make_atom(env, "sample_rate"),
                     enif_make_int(env, ctx->codec_ctx->sample_rate), &map);
   enif_make_map_put(env, map, enif_make_atom(env, "sample_format"),
-                    sample_format_to_tuple(env, fmt), &map);
+                    sample_format_to_tuple(env, ctx->output_sample_format),
+                    &map);
 
   return map;
 }
@@ -607,7 +608,7 @@ ERL_NIF_TERM decoder_add_data(ErlNifEnv *env, int argc,
       resampled_frame = av_frame_alloc();
       resampled_frame->ch_layout = frame->ch_layout;
       resampled_frame->sample_rate = frame->sample_rate;
-      resampled_frame->format = av_get_packed_sample_fmt(frame->format);
+      resampled_frame->format = ctx->output_sample_format;
 
       swr_convert_frame(ctx->resampler_ctx, resampled_frame, frame);
       av_frame_unref(frame);

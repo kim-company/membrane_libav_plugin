@@ -18,7 +18,7 @@ defmodule Membrane.LibAV.Decoder do
 
   def_output_pad(:output,
     availability: :always,
-    accepted_format: Membrane.RemoteStream,
+    accepted_format: Membrane.RawAudio,
     flow_control: :auto
   )
 
@@ -40,8 +40,8 @@ defmodule Membrane.LibAV.Decoder do
     stream_format = LibAV.decoder_stream_format(state.ctx)
 
     {[
-       stream_format:
-         {:output, %Membrane.RemoteStream{content_format: to_raw_audio_format(stream_format)}}
+       # {:output, %Membrane.RemoteStream{content_format: to_raw_audio_format(stream_format)}}
+       stream_format: {:output, to_raw_audio_format(stream_format)}
      ], state}
   end
 
