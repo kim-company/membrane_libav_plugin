@@ -36,4 +36,8 @@ defmodule Membrane.LibAV do
   def decoder_add_data(_ctx, _packet) do
     raise "NIF decoder_add_data/2 not implemented"
   end
+
+  def decoder_stream_format(_ctx) do
+    raise "NIF decoder_stream_format/1 not implemented"
+  end
 end

@@ -357,8 +357,23 @@ ERL_NIF_TERM demuxer_streams(ErlNifEnv *env, int argc,
     ERL_NIF_TERM map;
     map = enif_make_new_map(env);
 
+    ERL_NIF_TERM codec_type;
+    switch (params->codec_type) {
+    case AVMEDIA_TYPE_AUDIO:
+      codec_type = enif_make_atom(env, "audio");
+      break;
+    case AVMEDIA_TYPE_VIDEO:
+      codec_type = enif_make_atom(env, "video");
+      break;
+    default:
+      codec_type = enif_make_atom(env, "und");
+      break;
+    }
+
     enif_make_map_put(env, map, enif_make_atom(env, "codec_id"),
                       enif_make_int(env, params->codec_id), &map);
+    enif_make_map_put(env, map, enif_make_atom(env, "codec_type"), codec_type,
+                      &map);
     enif_make_map_put(env, map, enif_make_atom(env, "codec_name"),
                       enif_make_string(env, codec_name, ERL_NIF_UTF8), &map);
     enif_make_map_put(env, map, enif_make_atom(env, "codec_params"), res_term,
@@ -435,6 +450,73 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
   enif_release_resource(ctx_res);
 
   return term;
+}
+
+ERL_NIF_TERM make_sample_format(ErlNifEnv *env, AVCodecContext *ctx) {
+  switch (ctx->sample_fmt) {
+  case AV_SAMPLE_FMT_U8: ///< unsigned 8 bits
+    return enif_make_tuple2(env, enif_make_atom(env, "u"),
+                            enif_make_int(env, 8));
+  case AV_SAMPLE_FMT_S16: ///< signed 16 bits
+    return enif_make_tuple2(env, enif_make_atom(env, "s"),
+                            enif_make_int(env, 16));
+  case AV_SAMPLE_FMT_S32: ///< signed 32 bits
+    return enif_make_tuple2(env, enif_make_atom(env, "s"),
+                            enif_make_int(env, 32));
+  case AV_SAMPLE_FMT_FLT: ///< float
+    return enif_make_tuple2(env, enif_make_atom(env, "f"),
+                            enif_make_int(env, 32));
+  case AV_SAMPLE_FMT_DBL: ///< double
+    return enif_make_tuple2(env, enif_make_atom(env, "f"),
+                            enif_make_int(env, 64));
+  case AV_SAMPLE_FMT_U8P: ///< unsigned 8 bits, planar
+    return enif_make_tuple2(env, enif_make_atom(env, "up"),
+                            enif_make_int(env, 8));
+  case AV_SAMPLE_FMT_S16P: ///< signed 16 bits, planar
+    return enif_make_tuple2(env, enif_make_atom(env, "sp"),
+                            enif_make_int(env, 16));
+  case AV_SAMPLE_FMT_S32P: ///< signed 32 bits, planar
+    return enif_make_tuple2(env, enif_make_atom(env, "sp"),
+                            enif_make_int(env, 32));
+  case AV_SAMPLE_FMT_FLTP: ///< float, planar
+    return enif_make_tuple2(env, enif_make_atom(env, "fp"),
+                            enif_make_int(env, 32));
+  case AV_SAMPLE_FMT_DBLP: ///< double, planar
+    return enif_make_tuple2(env, enif_make_atom(env, "fp"),
+                            enif_make_int(env, 64));
+  case AV_SAMPLE_FMT_S64: ///< signed 64 bits
+    return enif_make_tuple2(env, enif_make_atom(env, "s"),
+                            enif_make_int(env, 64));
+  case AV_SAMPLE_FMT_S64P: ///< signed 64 bits, planar
+    return enif_make_tuple2(env, enif_make_atom(env, "sp"),
+                            enif_make_int(env, 64));
+
+  default:
+    return enif_make_tuple2(env, enif_make_atom(env, "und"),
+                            enif_make_int(env, 0));
+  }
+}
+
+ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
+                                   const ERL_NIF_TERM argv[]) {
+  DecoderContext *ctx;
+  ERL_NIF_TERM map;
+  get_decoder_context(env, argv[0], &ctx);
+
+  // TODO
+  // this function is only meaningful when the stream is of audio type. We
+  // need to support also video.
+
+  map = enif_make_new_map(env);
+  enif_make_map_put(env, map, enif_make_atom(env, "channels"),
+                    enif_make_int(env, ctx->codec_ctx->ch_layout.nb_channels),
+                    &map);
+  enif_make_map_put(env, map, enif_make_atom(env, "sample_rate"),
+                    enif_make_int(env, ctx->codec_ctx->sample_rate), &map);
+  enif_make_map_put(env, map, enif_make_atom(env, "sample_format"),
+                    make_sample_format(env, ctx->codec_ctx), &map);
+
+  return map;
 }
 
 ERL_NIF_TERM decoder_add_data(ErlNifEnv *env, int argc,
@@ -546,6 +628,7 @@ static ErlNifFunc nif_funcs[] = {
     {"demuxer_read_packet", 1, demuxer_read_packet},
     // Decoder
     {"decoder_alloc_context", 2, decoder_alloc_context},
+    {"decoder_stream_format", 1, decoder_stream_format},
     {"decoder_add_data", 2, decoder_add_data}};
 
 ERL_NIF_INIT(Elixir.Membrane.LibAV, nif_funcs, load, NULL, NULL, NULL)

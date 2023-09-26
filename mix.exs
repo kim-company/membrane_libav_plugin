@@ -26,7 +26,8 @@ defmodule Membrane.LibAV.MixProject do
     [
       {:membrane_core, "~> 0.12.5"},
       {:membrane_file_plugin, "~> 0.15.0", only: :test},
-      {:elixir_make, "~> 0.6", runtime: false}
+      {:elixir_make, "~> 0.6", runtime: false},
+      {:membrane_raw_audio_format, "~> 0.11.0"}
 
       # TMP deps
       # {:membrane_aac_plugin, "~> 0.16.1"},

@@ -24,11 +24,21 @@ defmodule Membrane.LibAV.Decoder do
 
   @impl true
   def handle_init(_ctx, opts) do
+    if opts.stream.codec_type != :audio do
+      raise "Unsupported codec_type != :audio"
+    end
+
     {[],
      %{
        stream: opts.stream,
        ctx: LibAV.decoder_alloc_context(opts.stream.codec_id, opts.stream.codec_params)
      }}
+  end
+
+  @impl true
+  def handle_stream_format(:input, _format, _ctx, state) do
+    stream_format = LibAV.decoder_stream_format(state.ctx)
+    {[stream_format: {:output, to_raw_audio_format(stream_format)}], state}
   end
 
   @impl true
@@ -58,19 +68,29 @@ defmodule Membrane.LibAV.Decoder do
 
     case LibAV.decoder_add_data(state.ctx, packet) do
       {key, frames} when key in [:ok, :eof] ->
-        {key, to_buffers(frames) |> IO.inspect(label: "BUFFERS")}
+        buffers =
+          Enum.map(frames, fn frame ->
+            %Membrane.Buffer{
+              payload: frame.data,
+              pts: frame.pts
+            }
+          end)
+
+        {key, buffers}
 
       {:error, error} ->
         raise to_string(error)
     end
   end
 
-  defp to_buffers(frames) do
-    Enum.map(frames, fn frame ->
-      %Membrane.Buffer{
-        payload: frame.data,
-        pts: frame.pts
-      }
-    end)
+  defp to_raw_audio_format(stream_format) do
+    {sample_type, sample_size} = stream_format.sample_format
+
+    %Membrane.RawAudio{
+      sample_rate: stream_format.sample_rate,
+      channels: stream_format.channels,
+      sample_format:
+        Membrane.RawAudio.SampleFormat.from_tuple({sample_type, sample_size, System.endianness()})
+    }
   end
 end
