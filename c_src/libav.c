@@ -17,8 +17,11 @@
 #include <string.h>
 #include <sys/types.h>
 
-// Arbitrary choice.
-#define IO_BUF_SIZE 48000
+// The smaller this number:
+// * the less we have to keep in the ioq
+// * the faster we can be at obtaining the header
+// * the easiest for a premature EOS.
+#define IO_BUF_SIZE 1024
 
 ErlNifResourceType *DEMUXER_CTX_RES_TYPE;
 ErlNifResourceType *CODEC_PARAMS_RES_TYPE;
