@@ -13,8 +13,12 @@ endif
 PRIV_DIR = $(MIX_APP_PATH)/priv
 LIB_SO = $(PRIV_DIR)/libav.so
 CC = clang
-CFLAGS = -fPIC -g3 -fno-omit-frame-pointer $(shell pkg-config --cflags libavcodec libavformat libavutil) -I$(ERTS_INCLUDE_DIR) -I.
-LDFLAGS = -dynamiclib -undefined dynamic_lookup $(shell pkg-config --libs libavcodec libavformat libavutil)
+CFLAGS = -fPIC -g3 -shared -fno-omit-frame-pointer $(shell pkg-config --cflags libavcodec libavformat libavutil libswresample) -I$(ERTS_INCLUDE_DIR) -I.
+LDFLAGS = -dynamiclib $(shell pkg-config --libs libavcodec libavformat libavutil libswresample)
+
+ifeq ($(shell uname -s), Darwin)
+LDFLAGS += -undefined dynamic_lookup
+endif
 
 all: $(LIB_SO)
 
