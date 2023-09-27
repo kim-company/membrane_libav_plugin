@@ -570,22 +570,15 @@ ERL_NIF_TERM decoder_add_data(ErlNifEnv *env, int argc,
 
     if (ctx->resampler_ctx) {
       AVFrame *resampled_frame;
-      int errnum;
       resampled_frame = av_frame_alloc();
       resampled_frame->nb_samples = frame->nb_samples;
       resampled_frame->ch_layout = frame->ch_layout;
       resampled_frame->sample_rate = frame->sample_rate;
       resampled_frame->format = ctx->output_sample_format;
 
-      if ((errnum = av_frame_get_buffer(resampled_frame, 0)) != 0)
-        printf("buffer allocation error: %d\n", errnum);
+      av_frame_get_buffer(resampled_frame, 0);
 
-      if ((errnum = swr_convert_frame(ctx->resampler_ctx, resampled_frame,
-                                      frame)) != 0) {
-        av_strerror(errnum, err, sizeof(err));
-        printf("conversion error %s\n", err);
-      }
-
+      swr_convert_frame(ctx->resampler_ctx, resampled_frame, frame);
       resampled_frame->pts = frame->pts;
 
       av_frame_unref(frame);

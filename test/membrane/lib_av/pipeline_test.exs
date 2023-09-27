@@ -39,7 +39,6 @@ defmodule Membrane.LibAV.PipelineTest do
             sample_rate: 48_000
           }
         })
-        # |> child(:encoder, Membrane.WAV.Serializer)
         |> child(:encoder, %Membrane.AAC.FDK.Encoder{
           aot: :mpeg4_he,
           bitrate_mode: 0

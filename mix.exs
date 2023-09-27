@@ -32,9 +32,7 @@ defmodule Membrane.LibAV.MixProject do
       # TMP deps
       # {:membrane_aac_plugin, "~> 0.16.1"},
       {:membrane_aac_fdk_plugin, "~> 0.16.0", only: :test},
-      {:membrane_ffmpeg_swresample_plugin, "~> 0.17.3", only: :test},
-      {:membrane_wav_plugin, "~> 0.9.2", only: :test}
-      # {:membrane_h264_ffmpeg_plugin, "~> 0.29.0", only: :test}
+      {:membrane_ffmpeg_swresample_plugin, "~> 0.17.3", only: :test}
     ]
   end
 
