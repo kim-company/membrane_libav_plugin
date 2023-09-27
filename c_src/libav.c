@@ -502,24 +502,25 @@ ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
   get_decoder_context(env, argv[0], &ctx);
 
   // TODO
-  // this function is only meaningful when the stream is of audio type. We
-  // need to support also video.
+  // this function is only meaningful when the stream is of audio type. To
+  // support video, add another if condition or a switch and add the relevant
+  // information to the map.
 
   map = enif_make_new_map(env);
 
-  if (ctx->codec_ctx->codec_type != AVMEDIA_TYPE_AUDIO)
-    return map;
+  if (ctx->codec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
 
-  enif_make_map_put(env, map, enif_make_atom(env, "channels"),
-                    enif_make_int(env, ctx->codec_ctx->ch_layout.nb_channels),
-                    &map);
-  enif_make_map_put(env, map, enif_make_atom(env, "sample_rate"),
-                    enif_make_int(env, ctx->codec_ctx->sample_rate), &map);
-  enif_make_map_put(
-      env, map, enif_make_atom(env, "sample_format"),
-      enif_make_string(env, av_get_sample_fmt_name(ctx->output_sample_format),
-                       ERL_NIF_UTF8),
-      &map);
+    enif_make_map_put(env, map, enif_make_atom(env, "channels"),
+                      enif_make_int(env, ctx->codec_ctx->ch_layout.nb_channels),
+                      &map);
+    enif_make_map_put(env, map, enif_make_atom(env, "sample_rate"),
+                      enif_make_int(env, ctx->codec_ctx->sample_rate), &map);
+    enif_make_map_put(
+        env, map, enif_make_atom(env, "sample_format"),
+        enif_make_string(env, av_get_sample_fmt_name(ctx->output_sample_format),
+                         ERL_NIF_UTF8),
+        &map);
+  }
 
   return map;
 }
@@ -565,14 +566,28 @@ ERL_NIF_TERM decoder_add_data(ErlNifEnv *env, int argc,
   list = enif_make_list(env, 0);
   frame = av_frame_alloc();
   while ((ret = avcodec_receive_frame(ctx->codec_ctx, frame)) == 0) {
+    enum AVSampleFormat actual_format = frame->format;
+
     if (ctx->resampler_ctx) {
       AVFrame *resampled_frame;
+      int errnum;
       resampled_frame = av_frame_alloc();
+      resampled_frame->nb_samples = frame->nb_samples;
       resampled_frame->ch_layout = frame->ch_layout;
       resampled_frame->sample_rate = frame->sample_rate;
       resampled_frame->format = ctx->output_sample_format;
 
-      swr_convert_frame(ctx->resampler_ctx, resampled_frame, frame);
+      if ((errnum = av_frame_get_buffer(resampled_frame, 0)) != 0)
+        printf("buffer allocation error: %d\n", errnum);
+
+      if ((errnum = swr_convert_frame(ctx->resampler_ctx, resampled_frame,
+                                      frame)) != 0) {
+        av_strerror(errnum, err, sizeof(err));
+        printf("conversion error %s\n", err);
+      }
+
+      resampled_frame->pts = frame->pts;
+
       av_frame_unref(frame);
       frame = resampled_frame;
     }

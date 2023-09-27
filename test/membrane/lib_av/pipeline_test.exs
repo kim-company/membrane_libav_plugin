@@ -7,8 +7,8 @@ defmodule Membrane.LibAV.PipelineTest do
     use Membrane.Pipeline
 
     # @input_path "/Users/dmorn/Downloads/multi-lang.mp4"
-    # @input_path "/Users/dmorn/projects/video-taxi-pepe-demo/test/data/babylon-30s-talk.mp4"
-    @input_path "test/data/safari.mp4"
+    @input_path "/Users/dmorn/projects/video-taxi-pepe-demo/test/data/babylon-30s-talk.mp4"
+    # @input_path "test/data/safari.mp4"
     # @input_path "/Users/dmorn/projects/video-taxi-pepe-demo/test/data/babylon-30s-talk.ogg"
 
     def handle_init(_ctx, opts) do
@@ -39,7 +39,11 @@ defmodule Membrane.LibAV.PipelineTest do
             sample_rate: 48_000
           }
         })
-        |> child(:encoder, Membrane.AAC.FDK.Encoder)
+        # |> child(:encoder, Membrane.WAV.Serializer)
+        |> child(:encoder, %Membrane.AAC.FDK.Encoder{
+          aot: :mpeg4_he,
+          bitrate_mode: 0
+        })
         |> child(:sink, %Membrane.File.Sink{location: state.output_path})
 
       {[spec: spec], %{state | has_stream: true}}
