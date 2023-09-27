@@ -6,18 +6,22 @@
 ifndef ERTS_INCLUDE_DIR
 ERTS_INCLUDE_DIR := $(shell rtx where erlang)/erts-14.0.2/include
 endif
+ifndef MIX_APP_PATH
+MIX_APP_PATH := ..
+endif
 
+PRIV_DIR = $(MIX_APP_PATH)/priv
+LIB_SO = $(PRIV_DIR)/libav.so
 CC = clang
 CFLAGS = -fPIC -g3 -fno-omit-frame-pointer $(shell pkg-config --cflags libavcodec libavformat libavutil) -I$(ERTS_INCLUDE_DIR) -I.
 LDFLAGS = -dynamiclib -undefined dynamic_lookup $(shell pkg-config --libs libavcodec libavformat libavutil)
 
-OUTPUT = libav.so
+all: $(LIB_SO)
 
-all: $(OUTPUT)
-
-libav.so: libav.c
+$(LIB_SO): libav.c
+	@ mkdir -p $(PRIV_DIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LIBS)
 
 clean:
-	rm -f $(OUTPUT)
+	rm -f $(LIB_SO)
 
