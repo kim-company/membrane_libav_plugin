@@ -87,21 +87,28 @@ defmodule Membrane.LibAV.Decoder do
     end
   end
 
-  defp endianness() do
-    case System.endianness() do
-      :little -> :le
-      :big -> :be
-    end
-  end
-
   defp to_raw_audio_format(stream_format) do
-    {sample_type, sample_size} = stream_format.sample_format
+    {sample_type, sample_size} =
+      case to_string(stream_format.sample_format) do
+        "u8" -> {:u, 8}
+        "s16" -> {:s, 16}
+        "s32" -> {:s, 32}
+        "flt" -> {:f, 32}
+        "dbl" -> {:f, 64}
+        other -> raise "Sample format #{inspect(other)} not supported"
+      end
+
+    endianness =
+      case System.endianness() do
+        :little -> :le
+        :big -> :be
+      end
 
     %Membrane.RawAudio{
       sample_rate: stream_format.sample_rate,
       channels: stream_format.channels,
       sample_format:
-        Membrane.RawAudio.SampleFormat.from_tuple({sample_type, sample_size, endianness()})
+        Membrane.RawAudio.SampleFormat.from_tuple({sample_type, sample_size, endianness})
     }
   end
 end

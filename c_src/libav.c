@@ -3,6 +3,7 @@
 #include "libavcodec/codec_id.h"
 #include "libavcodec/codec_par.h"
 #include "libavcodec/packet.h"
+#include "libavutil/avutil.h"
 #include "libavutil/frame.h"
 #include "libavutil/samplefmt.h"
 #include "libswresample/swresample.h"
@@ -493,51 +494,6 @@ ERL_NIF_TERM decoder_alloc_context(ErlNifEnv *env, int argc,
   return term;
 }
 
-ERL_NIF_TERM sample_format_to_tuple(ErlNifEnv *env, enum AVSampleFormat fmt) {
-  switch (fmt) {
-  case AV_SAMPLE_FMT_U8: ///< unsigned 8 bits
-    return enif_make_tuple2(env, enif_make_atom(env, "u"),
-                            enif_make_int(env, 8));
-  case AV_SAMPLE_FMT_S16: ///< signed 16 bits
-    return enif_make_tuple2(env, enif_make_atom(env, "s"),
-                            enif_make_int(env, 16));
-  case AV_SAMPLE_FMT_S32: ///< signed 32 bits
-    return enif_make_tuple2(env, enif_make_atom(env, "s"),
-                            enif_make_int(env, 32));
-  case AV_SAMPLE_FMT_FLT: ///< float
-    return enif_make_tuple2(env, enif_make_atom(env, "f"),
-                            enif_make_int(env, 32));
-  case AV_SAMPLE_FMT_DBL: ///< double
-    return enif_make_tuple2(env, enif_make_atom(env, "f"),
-                            enif_make_int(env, 64));
-  case AV_SAMPLE_FMT_U8P: ///< unsigned 8 bits, planar
-    return enif_make_tuple2(env, enif_make_atom(env, "up"),
-                            enif_make_int(env, 8));
-  case AV_SAMPLE_FMT_S16P: ///< signed 16 bits, planar
-    return enif_make_tuple2(env, enif_make_atom(env, "sp"),
-                            enif_make_int(env, 16));
-  case AV_SAMPLE_FMT_S32P: ///< signed 32 bits, planar
-    return enif_make_tuple2(env, enif_make_atom(env, "sp"),
-                            enif_make_int(env, 32));
-  case AV_SAMPLE_FMT_FLTP: ///< float, planar
-    return enif_make_tuple2(env, enif_make_atom(env, "fp"),
-                            enif_make_int(env, 32));
-  case AV_SAMPLE_FMT_DBLP: ///< double, planar
-    return enif_make_tuple2(env, enif_make_atom(env, "fp"),
-                            enif_make_int(env, 64));
-  case AV_SAMPLE_FMT_S64: ///< signed 64 bits
-    return enif_make_tuple2(env, enif_make_atom(env, "s"),
-                            enif_make_int(env, 64));
-  case AV_SAMPLE_FMT_S64P: ///< signed 64 bits, planar
-    return enif_make_tuple2(env, enif_make_atom(env, "sp"),
-                            enif_make_int(env, 64));
-
-  default:
-    return enif_make_tuple2(env, enif_make_atom(env, "und"),
-                            enif_make_int(env, 0));
-  }
-}
-
 ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
                                    const ERL_NIF_TERM argv[]) {
   DecoderContext *ctx;
@@ -550,14 +506,20 @@ ERL_NIF_TERM decoder_stream_format(ErlNifEnv *env, int argc,
   // need to support also video.
 
   map = enif_make_new_map(env);
+
+  if (ctx->codec_ctx->codec_type != AVMEDIA_TYPE_AUDIO)
+    return map;
+
   enif_make_map_put(env, map, enif_make_atom(env, "channels"),
                     enif_make_int(env, ctx->codec_ctx->ch_layout.nb_channels),
                     &map);
   enif_make_map_put(env, map, enif_make_atom(env, "sample_rate"),
                     enif_make_int(env, ctx->codec_ctx->sample_rate), &map);
-  enif_make_map_put(env, map, enif_make_atom(env, "sample_format"),
-                    sample_format_to_tuple(env, ctx->output_sample_format),
-                    &map);
+  enif_make_map_put(
+      env, map, enif_make_atom(env, "sample_format"),
+      enif_make_string(env, av_get_sample_fmt_name(ctx->output_sample_format),
+                       ERL_NIF_UTF8),
+      &map);
 
   return map;
 }
