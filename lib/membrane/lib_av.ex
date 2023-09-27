@@ -2,7 +2,8 @@ defmodule Membrane.LibAV do
   @on_load :load_nifs
 
   def load_nifs do
-    :erlang.load_nif(~c"./c_src/libav", 0)
+    path = :filename.join(:code.priv_dir(:membrane_libav_plugin), ~c"libav")
+    :erlang.load_nif(path, 0)
   end
 
   def demuxer_alloc_context() do
