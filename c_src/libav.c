@@ -21,7 +21,7 @@
 // * the less we have to keep in the ioq
 // * the faster we can be at obtaining the header
 // * the easiest for a premature EOS.
-#define IO_BUF_SIZE 1024 * 2
+#define DEFAULT_PROBE_SIZE 1024 * 2
 
 ErlNifResourceType *DEMUXER_CTX_RES_TYPE;
 ErlNifResourceType *CODEC_PARAMS_RES_TYPE;
@@ -197,12 +197,12 @@ ERL_NIF_TERM demuxer_alloc_context(ErlNifEnv *env, int argc,
 
   enif_get_int(env, argv[0], &probe_size);
   if (probe_size <= 0)
-    probe_size = IO_BUF_SIZE;
+    probe_size = DEFAULT_PROBE_SIZE;
 
   Ioq *queue = (Ioq *)malloc(sizeof(Ioq));
-  queue->ptr = malloc(IO_BUF_SIZE);
+  queue->ptr = malloc(probe_size);
   queue->mode = QUEUE_MODE_GROW;
-  queue->size = IO_BUF_SIZE;
+  queue->size = probe_size;
   queue->pos = 0;
   queue->buf_end = 0;
 
