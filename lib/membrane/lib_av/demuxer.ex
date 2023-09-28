@@ -17,11 +17,21 @@ defmodule Membrane.LibAV.Demuxer do
     flow_control: :manual
   )
 
+  def_options(
+    probe_size: [
+      spec: pos_integer(),
+      doc: "Demuxer initial probe size. It will be doubled if the probe is not
+        capable of holding the header of the input stream. Do not shrink this value too
+        much or the demuxer will encouter a premature EOS while reading the stream.",
+      default: 2048
+    ]
+  )
+
   @impl true
-  def handle_init(_ctx, _opts) do
+  def handle_init(_ctx, opts) do
     {[],
      %{
-       ctx: LibAV.demuxer_alloc_context(),
+       ctx: LibAV.demuxer_alloc_context(opts.probe_size),
        ctx_eof: false,
        format_detected?: false,
        available_streams: [],

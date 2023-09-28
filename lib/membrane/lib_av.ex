@@ -6,8 +6,8 @@ defmodule Membrane.LibAV do
     :erlang.load_nif(path, 0)
   end
 
-  def demuxer_alloc_context() do
-    raise "NIF demuxer_alloc_context/0 not implemented"
+  def demuxer_alloc_context(_probe_size) do
+    raise "NIF demuxer_alloc_context/1 not implemented"
   end
 
   def demuxer_add_data(_ctx, _data) do
